@@ -28,26 +28,35 @@ def get_keyword_score(resume_text: str, jd_text: str):
     resume_text_lower = resume_text.lower()
     jd_text_lower = jd_text.lower()
     
-    custom_keywords = []
-    has_custom = False
-    if "required keywords:" in jd_text_lower:
-        has_custom = True
-        parts = jd_text_lower.split("required keywords:")
-        if len(parts) > 1:
-            kw_section = parts[-1].strip()
-            custom_keywords = [k.strip() for k in re.split(r'[,\n]', kw_section) if k.strip()]
-            
-    if has_custom:
-        required_skills = custom_keywords
+    main_jd = jd_text_lower
+    custom_kw_list = []
+    cert_list = []
+    
+    if "additional requirements / certifications:" in jd_text_lower:
+        parts = jd_text_lower.split("additional requirements / certifications:")
+        main_jd = parts[0]
+        cert_section = parts[1].strip()
+        cert_list = [c.strip() for c in re.split(r'[,\n]', cert_section) if c.strip()]
+        
+    if "required keywords:" in main_jd:
+        parts = main_jd.split("required keywords:")
+        main_jd = parts[0]
+        kw_section = parts[1].strip()
+        custom_kw_list = [k.strip() for k in re.split(r'[,\n]', kw_section) if k.strip()]
+        
+    if custom_kw_list:
+        base_skills = custom_kw_list
     else:
         # Extract matching skills from JD
-        required_skills = [skill for skill in COMMON_SKILLS if skill in jd_text_lower]
-        if not required_skills:
+        base_skills = [skill for skill in COMMON_SKILLS if skill in main_jd]
+        if not base_skills:
             # Fallback: extract clean words from JD
-            words = re.findall(r'\b\w{3,15}\b', jd_text_lower)
+            words = re.findall(r'\b\w{3,15}\b', main_jd)
             stopwords = {'and', 'the', 'for', 'with', 'you', 'are', 'our', 'will', 'that', 'this', 'work', 'join', 'team', 'role', 'about', 'from', 'have', 'need', 'must'}
-            required_skills = list(set(words) - stopwords)[:15]
+            base_skills = list(set(words) - stopwords)[:15]
             
+    required_skills = list(dict.fromkeys(base_skills + cert_list))
+    
     if not required_skills:
         return 0.0, [], []
         
@@ -178,6 +187,7 @@ async def screen_resume(
     files: List[UploadFile] = File(...),
     job_description: Optional[str] = Form(None),
     keywords: Optional[str] = Form(None),
+    certifications: Optional[str] = Form(None),
     top_n: Optional[int] = Form(10),
     db: Session = Depends(database.get_db),
     current_user: models.User = Depends(get_current_user)
@@ -190,7 +200,9 @@ async def screen_resume(
 
     final_jd = job_description
     if keywords and keywords.strip():
-        final_jd = job_description + f"\n\nRequired Keywords: {keywords}"
+        final_jd += f"\n\nRequired Keywords: {keywords}"
+    if certifications and certifications.strip():
+        final_jd += f"\n\nAdditional Requirements / Certifications: {certifications}"
 
     candidate_count = db.query(models.Candidate).count()
     MAX_CANDIDATES = 50
@@ -422,6 +434,12 @@ def delete_candidate(
     if not candidate:
         raise HTTPException(status_code=404, detail="Candidate not found")
         
+    # Clear referencing candidate_id in screening_jobs first to prevent integrity violation
+    db.query(models.ScreeningJob).filter(
+        models.ScreeningJob.candidate_id == candidate_id
+    ).update({models.ScreeningJob.candidate_id: None}, synchronize_session=False)
+    db.commit()
+
     db.delete(candidate)
     db.commit()
     
@@ -730,16 +748,24 @@ def reset_screened_candidates(
     Also clears associated screening jobs and deletes their Qdrant search collection.
     """
     try:
-        # 1. Clear candidate_id from screening jobs first to avoid foreign key constraints
-        db.query(models.ScreeningJob).filter(
-            models.ScreeningJob.created_by == current_user.id
-        ).update({models.ScreeningJob.candidate_id: None})
-        db.commit()
+        # Get IDs of candidates we are about to delete in 'Resume Screening' stage for this user
+        candidate_ids = [c.id for c in db.query(models.Candidate.id).filter(
+            models.Candidate.stage == models.CandidateStage.Resume_Screening.value,
+            models.Candidate.created_by == current_user.id
+        ).all()]
+
+        if candidate_ids:
+            # 1. Nullify candidate_id in ALL screening jobs referencing these candidates to avoid foreign key violations
+            db.query(models.ScreeningJob).filter(
+                models.ScreeningJob.candidate_id.in_(candidate_ids)
+            ).update({models.ScreeningJob.candidate_id: None}, synchronize_session=False)
+            db.commit()
 
         # 2. Delete all screening jobs created by this user
         db.query(models.ScreeningJob).filter(
             models.ScreeningJob.created_by == current_user.id
         ).delete(synchronize_session=False)
+        db.commit()
 
         # 3. Delete candidates in the "Resume Screening" stage
         deleted_count = db.query(models.Candidate).filter(

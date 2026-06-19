@@ -7,6 +7,7 @@ import {
     BrainCircuit, /* UserCheck, Layers, BarChart3 */
 } from 'lucide-react';
 import GlobalNavbar from '../components/GlobalNavbar';
+import { PremiumBanner, PremiumShowcaseModal } from '../components/PremiumShowcase';
 
 /* SIDEBAR ITEM COMPONENT — kept for future re-enabling
 const SidebarItem = ({ icon: Icon, label, path, isOpen }) => {
@@ -48,15 +49,23 @@ const SidebarItem = ({ icon: Icon, label, path, isOpen }) => {
 */
 
 const DashboardLayout = () => {
+    const role = localStorage.getItem('role');
+    const isAdmin = role === 'admin' || role === 'SUPER_ADMIN' || role === 'HR_ADMIN';
+    const location = useLocation();
+    const isPortalPage = location.pathname === '/dashboard';
+    const showNavbar = isAdmin || !isPortalPage;
+
     return (
         <div className="h-screen bg-white flex flex-col overflow-hidden font-sans antialiased text-black selection:bg-green-100 selection:text-green-900">
             {/* 1. Global Navbar (Fixed Height) */}
-            <div className="flex-none z-50 relative">
-                <GlobalNavbar />
-            </div>
+            {showNavbar && (
+                <div className="flex-none z-50 relative">
+                    <GlobalNavbar />
+                </div>
+            )}
 
             {/* 2. Main Content (Full Width - No Sidebar) */}
-            <div className="flex-1 overflow-hidden pt-16">
+            <div className={`flex-1 overflow-hidden ${showNavbar ? 'pt-20' : 'pt-0'}`}>
 
                 {/* SIDEBAR COMMENTED OUT — navigation moved to top navbar */}
 
@@ -71,5 +80,5 @@ const DashboardLayout = () => {
     );
 };
 
-
 export default DashboardLayout;
+

@@ -102,11 +102,13 @@ def _do_screening(job_id: int) -> dict:
             full_text = merged.get("full_text", "")
             
             # Post-vision keyword check (on extracted text)
+            keyword_match_pct = None
             if has_custom_keywords:
                 keyword_score, matched_skills, missing_skills = get_keyword_score(full_text, job.jd_text)
                 log(f"[Worker] Job {job_id} → post-vision keyword check: matched {len(matched_skills)} keywords.")
                 if len(matched_skills) == 0:
                     raise ScreeningValidationError("Resume did not match any of the required keywords. (Matched: 0)")
+                keyword_match_pct = keyword_score
 
             # Split merged result into contact info and analysis
             candidate_info = {
@@ -126,6 +128,10 @@ def _do_screening(job_id: int) -> dict:
                 "missing_skills":   merged.get("missing_skills", []),
                 "reasoning":        merged.get("reasoning", ""),
                 "extracted_role":   merged.get("extracted_role", ""),
+                "experience":       merged.get("experience", "None"),
+                "certification_match": merged.get("certification_match", []),
+                "candidate_summary": merged.get("candidate_summary", ""),
+                "keyword_match_pct": keyword_match_pct
             }
         else:
             # 2. Keyword score check first (fast regex-based, no LLM)
@@ -181,6 +187,10 @@ def _do_screening(job_id: int) -> dict:
                 "missing_skills":   merged.get("missing_skills", []),
                 "reasoning":        merged.get("reasoning", ""),
                 "extracted_role":   merged.get("extracted_role", ""),
+                "experience":       merged.get("experience", "None"),
+                "certification_match": merged.get("certification_match", []),
+                "candidate_summary": merged.get("candidate_summary", ""),
+                "keyword_match_pct": keyword_score if has_custom_keywords else None
             }
 
         # Filename fallback for name
@@ -224,6 +234,9 @@ def _do_screening(job_id: int) -> dict:
             candidate.analysis_data = analysis
             candidate.full_text = full_text
             candidate.role = role
+            candidate.created_by = job.created_by
+            candidate.stage = models.CandidateStage.Resume_Screening
+            candidate.status = models.CandidateStatus.Applied
 
         db.commit()
         db.refresh(candidate)

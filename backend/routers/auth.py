@@ -2,7 +2,20 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
+import os
 import schemas, models, utils, database
+
+
+def _get_admin_emails() -> list[str]:
+    """Load admin email list from ADMIN_EMAILS env var (comma-separated).
+    Falls back to ADMIN_EMAIL (singular) for single-email configs.
+    """
+    raw = os.getenv("ADMIN_EMAILS") or os.getenv("ADMIN_EMAIL", "")
+    return [e.strip().lower() for e in raw.split(",") if e.strip()]
+
+
+def _is_admin_email(email: str) -> bool:
+    return email.strip().lower() in _get_admin_emails()
 
 router = APIRouter(
     prefix="/api/auth",
@@ -77,13 +90,14 @@ class ClerkSyncSchema(BaseModel):
 @router.post("/clerk-sync/", response_model=schemas.Token)
 def clerk_sync(sync_data: ClerkSyncSchema, db: Session = Depends(database.get_db)):
     email = sync_data.email.strip().lower()
+    role = "admin" if _is_admin_email(email) else "user"
     
     user = db.query(models.User).filter(models.User.email == email).first()
     if not user:
         try:
             user = models.User(
                 email=email,
-                role=models.UserRole.SUPER_ADMIN,
+                role=role,
                 hashed_password=utils.get_password_hash("clerk_managed_user"),
                 is_active=True
             )
@@ -98,9 +112,15 @@ def clerk_sync(sync_data: ClerkSyncSchema, db: Session = Depends(database.get_db
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                     detail=f"Database sync failed: {str(e)}"
                 )
+    
+    # Sync and update the role in case it was changed or is out of sync with ADMIN_EMAILS
+    if user.role != role:
+        user.role = role
+        db.commit()
+        db.refresh(user)
         
     access_token = utils.create_access_token(data={"sub": user.email})
-    return {"access": access_token, "token_type": "bearer"}
+    return {"access": access_token, "token_type": "bearer", "role": user.role, "email": user.email}
 
 # Dependency
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login/")
@@ -134,3 +154,12 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
         )
         
     return user
+
+@router.get("/me/")
+def get_me(current_user: models.User = Depends(get_current_user)):
+    return {
+        "id": current_user.id,
+        "email": current_user.email,
+        "role": current_user.role,
+        "is_active": current_user.is_active
+    }

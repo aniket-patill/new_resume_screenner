@@ -199,8 +199,6 @@ OUTPUT JSON ONLY:
           • Extracts candidate contact info (name, email, phone)
           • Scores the resume against the JD using the weighted rubric
           • Returns extracted_role, skills, reasoning
-
-        Returns a merged dict containing both info-extraction and screening fields.
         """
         sw = weights
         prompt = f"""
@@ -212,7 +210,7 @@ You are an advanced Automated Applicant Tracking System (ATS) and Senior Technic
 {jd_text}
 
 #### Candidate Resume:
-{full_text[:25000]}
+{full_text}
 
 ### Tasks:
 1. **Contact Information Extraction**: Extract the candidate's full name, email address, and phone number.
@@ -229,6 +227,9 @@ You are an advanced Automated Applicant Tracking System (ATS) and Senior Technic
    - Critically check for the presence of actual contact details. If a contact detail (like a phone number or email) is completely missing or contains only dummy/placeholder values, apply an incompleteness deduction of **10%** from the overall score to penalize unprofessional resume readiness.
    - Base the component scores strictly and objectively on the candidate's skills relative to the Job Description and the required keywords (if specified in the JD under 'Required Keywords:'). If the candidate lacks essential required skills or experience, grade them rigorously and lower the scores accordingly.
    - *Total Score constraint: The sum of the component scores MUST exactly equal the overall score after any deductions (max 100).*
+4. **Experience Extraction**: Extract the candidate's total years of experience as a short string (e.g. "2 Years", "5 Years", "8+ Years", "None").
+5. **Certification Match**: If "Additional Requirements / Certifications" are specified in the Job Description, evaluate if the candidate has met these certifications/requirements. Extract a list of matched certifications/requirements. If none are matched or specified, return an empty list.
+6. **Candidate Summary**: Generate a short, professional, and concise summary of the candidate's profile and matching status (2-3 lines maximum, suitable for reports).
 
 ### Output Format:
 Return a valid JSON object matching this schema. Do not output any preamble, markdown code blocks, or postamble.
@@ -247,7 +248,9 @@ Return a valid JSON object matching this schema. Do not output any preamble, mar
     "key_skills_match": ["Skill A", "Skill B"],
     "missing_skills": ["Skill X", "Skill Y"],
     "reasoning": "Professional explanation details: 1) why the candidate received the matching scores, 2) core strengths, 3) notable gaps relative to requirements, and 4) detail any deductions applied (e.g. for missing/placeholder contact details).",
-    "extracted_role": "Normalized job title"
+    "experience": "Candidate's total experience, e.g. 5 Years or 8+ Years",
+    "certification_match": ["AWS Certified", "PMP Certified"],
+    "candidate_summary": "Short 2-3 line summary suitable for reports"
 }}
 """
         return gemini_client.call_gemini(
@@ -354,6 +357,9 @@ You are an advanced Automated Applicant Tracking System (ATS) and Senior Technic
    - Critically check for the presence of actual contact details. If a contact detail (like a phone number or email) is completely missing or contains only dummy/placeholder values, apply an incompleteness deduction of **10%** from the overall score to penalize unprofessional resume readiness.
    - Base the component scores strictly and objectively on the candidate's skills relative to the Job Description and the required keywords (if specified in the JD under 'Required Keywords:'). If the candidate lacks essential required skills or experience, grade them rigorously and lower the scores accordingly.
    - *Total Score constraint: The sum of the component scores MUST exactly equal the overall score after any deductions (max 100).*
+5. **Experience Extraction**: Extract the candidate's total years of experience as a short string (e.g. "2 Years", "5 Years", "8+ Years", "None").
+6. **Certification Match**: If "Additional Requirements / Certifications" are specified in the Job Description, evaluate if the candidate has met these certifications/requirements. Extract a list of matched certifications/requirements. If none are matched or specified, return an empty list.
+7. **Candidate Summary**: Generate a short, professional, and concise summary of the candidate's profile and matching status (2-3 lines maximum, suitable for reports).
 
 ### Output Format:
 Return a valid JSON object matching this schema. Do not output any preamble, markdown code blocks, or postamble.
@@ -373,7 +379,10 @@ Return a valid JSON object matching this schema. Do not output any preamble, mar
     "missing_skills": ["Skill X", "Skill Y"],
     "reasoning": "Professional explanation details: 1) why the candidate received the matching scores, 2) core strengths, 3) notable gaps relative to requirements, and 4) detail any deductions applied (e.g. for missing/placeholder contact details).",
     "extracted_role": "Normalized job title",
-    "full_text": "Complete transcribed text of the resume here."
+    "full_text": "Complete transcribed text of the resume here.",
+    "experience": "Candidate's total experience, e.g. 5 Years or 8+ Years",
+    "certification_match": ["AWS Certified", "PMP Certified"],
+    "candidate_summary": "Short 2-3 line summary suitable for reports"
 }}
 """
         model = genai.GenerativeModel(

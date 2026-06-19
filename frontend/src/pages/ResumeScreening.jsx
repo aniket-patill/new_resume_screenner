@@ -176,19 +176,58 @@ const CandidateResultCard = ({ candidate, rank }) => {
 
 // --- Main Page Component ---
 const ResumeScreening = () => {
-    const [jobDescription, setJobDescription] = useState('');
+    const [jobDescription, setJobDescription] = useState(() => {
+        return sessionStorage.getItem('rs_jobDescription') || '';
+    });
     const [files, setFiles] = useState([]);
+    const [filesMetadata, setFilesMetadata] = useState(() => {
+        try {
+            return JSON.parse(sessionStorage.getItem('rs_filesMetadata')) || [];
+        } catch {
+            return [];
+        }
+    });
     const folderInputRef = useRef(null);
     const jdFileInputRef = useRef(null);
     const [showFolderMenu, setShowFolderMenu] = useState(false);
 
     // Screening Settings
-    const [shortlistCount, setShortlistCount] = useState(5);
+    const [shortlistCount, setShortlistCount] = useState(() => {
+        return Number(sessionStorage.getItem('rs_shortlistCount')) || 5;
+    });
 
     // Keyword Matching State
-    const [keywords, setKeywords] = useState([]);
+    const [keywords, setKeywords] = useState(() => {
+        try {
+            return JSON.parse(sessionStorage.getItem('rs_keywords')) || [];
+        } catch {
+            return [];
+        }
+    });
     const [keywordInput, setKeywordInput] = useState('');
     const presetSkills = ["Python", "JavaScript", "React", "Node.js", "SQL", "Docker", "AWS", "Machine Learning", "FastAPI"];
+
+    // Additional Requirements / Certifications State
+    const [certifications, setCertifications] = useState(() => {
+        try {
+            return JSON.parse(sessionStorage.getItem('rs_certifications')) || [];
+        } catch {
+            return [];
+        }
+    });
+    const [certInput, setCertInput] = useState('');
+
+    const handleAddCert = () => {
+        const clean = certInput.trim();
+        if (clean && !certifications.includes(clean)) {
+            setCertifications(prev => [...prev, clean]);
+        }
+        setCertInput('');
+    };
+
+    const handleRemoveCert = (cert) => {
+        setCertifications(prev => prev.filter(c => c !== cert));
+    };
 
     // Custom Upload Modals State
     const [showLocalModal, setShowLocalModal] = useState(false);
@@ -222,9 +261,79 @@ const ResumeScreening = () => {
     const [batchTotal, setBatchTotal] = useState(0);
     const pollTimerRef = useRef(null);
 
-    const [results, setResults] = useState([]);
+    const [results, setResults] = useState(() => {
+        try {
+            return JSON.parse(sessionStorage.getItem('rs_results')) || [];
+        } catch {
+            return [];
+        }
+    });
     const [isPromoting, setIsPromoting] = useState(false);
     const [promoteSuccess, setPromoteSuccess] = useState(false);
+    const [showResetConfirm, setShowResetConfirm] = useState(false);
+
+    // Sync state changes to sessionStorage
+    useEffect(() => {
+        if (jobDescription) {
+            sessionStorage.setItem('rs_jobDescription', jobDescription);
+        } else {
+            sessionStorage.removeItem('rs_jobDescription');
+        }
+    }, [jobDescription]);
+
+    useEffect(() => {
+        if (keywords.length > 0) {
+            sessionStorage.setItem('rs_keywords', JSON.stringify(keywords));
+        } else {
+            sessionStorage.removeItem('rs_keywords');
+        }
+    }, [keywords]);
+
+    useEffect(() => {
+        if (certifications.length > 0) {
+            sessionStorage.setItem('rs_certifications', JSON.stringify(certifications));
+        } else {
+            sessionStorage.removeItem('rs_certifications');
+        }
+    }, [certifications]);
+
+    useEffect(() => {
+        sessionStorage.setItem('rs_shortlistCount', String(shortlistCount));
+    }, [shortlistCount]);
+
+    useEffect(() => {
+        if (results.length > 0) {
+            sessionStorage.setItem('rs_results', JSON.stringify(results));
+        } else {
+            sessionStorage.removeItem('rs_results');
+        }
+    }, [results]);
+
+    useEffect(() => {
+        if (files.length > 0) {
+            const meta = files.map(f => ({ name: f.name, size: f.size }));
+            sessionStorage.setItem('rs_filesMetadata', JSON.stringify(meta));
+            setFilesMetadata(meta);
+        }
+    }, [files]);
+
+    const handleResetAll = () => {
+        setJobDescription('');
+        setFiles([]);
+        setFilesMetadata([]);
+        setKeywords([]);
+        setCertifications([]);
+        setResults([]);
+        setBatchStatus('idle');
+        setBatchCompleted(0);
+        setBatchTotal(0);
+        setPromoteSuccess(false);
+        setShowResetConfirm(false);
+        // Clear only the rs_* keys, not all sessionStorage
+        ['rs_jobDescription', 'rs_keywords', 'rs_certifications', 'rs_shortlistCount', 'rs_results', 'rs_filesMetadata'].forEach(k => sessionStorage.removeItem(k));
+    };
+
+    const filesToDisplay = files.length > 0 ? files : filesMetadata;
 
     // Validation
     const handleConfirmUpload = (newFiles) => {
@@ -294,7 +403,7 @@ const ResumeScreening = () => {
     };
 
     // Validation
-    const isCountInvalid = files.length > 0 && shortlistCount > files.length;
+    const isCountInvalid = filesToDisplay.length > 0 && shortlistCount > filesToDisplay.length;
     const isValidToStart = files.length > 0 && jobDescription.trim() && !isCountInvalid && shortlistCount > 0;
 
     // Drag & Drop
@@ -332,6 +441,9 @@ const ResumeScreening = () => {
         formData.append('top_n', shortlistCount);
         if (keywords.length > 0) {
             formData.append('keywords', keywords.join(', '));
+        }
+        if (certifications.length > 0) {
+            formData.append('certifications', certifications.join(', '));
         }
         for (let i = 0; i < files.length; i++) {
             formData.append('files', files[i]);
@@ -570,6 +682,64 @@ const ResumeScreening = () => {
                             </div>
                         </div>
 
+                        {/* Card 4: Additional Requirements / Certifications */}
+                        <div className="bg-white border border-gray-200/80 rounded-2xl p-5 shadow-sm hover:shadow-md transition-shadow duration-300 flex flex-col">
+                            <h3 className="font-bold text-[#5d8c2c] flex items-center gap-2 text-sm tracking-tight mb-3">
+                                <div className="w-7 h-7 bg-green-100 rounded-lg flex items-center justify-center">
+                                    <Sliders size={14} className="text-[#5d8c2c]" />
+                                </div>
+                                Additional Requirements / Certifications
+                            </h3>
+                            <p className="text-[11px] text-gray-500 font-medium mb-3 leading-relaxed">
+                                Enter certifications, qualifications, achievements, or special criteria.
+                            </p>
+                            
+                            {/* Certifications Input */}
+                            <div className="flex gap-2 mb-3">
+                                <input
+                                    type="text"
+                                    value={certInput}
+                                    onChange={(e) => setCertInput(e.target.value)}
+                                    onKeyDown={(e) => {
+                                        if (e.key === 'Enter') {
+                                            e.preventDefault();
+                                            handleAddCert();
+                                        }
+                                    }}
+                                    placeholder="e.g. AWS Certified Architect & press Enter"
+                                    className="flex-1 px-3 py-1.5 bg-gray-50/80 border border-gray-200 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-[#5d8c2c]/30 focus:border-[#5d8c2c]/50"
+                                />
+                                <button
+                                    onClick={handleAddCert}
+                                    className="text-xs font-semibold text-white bg-[#5d8c2c] px-3 py-1.5 rounded-lg hover:bg-[#4a7a1f] transition-colors"
+                                >
+                                    Add
+                                </button>
+                            </div>
+
+                            {/* Selected Chips */}
+                            <div className="overflow-y-auto pr-1">
+                                <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wide block mb-1.5">Active Requirements ({certifications.length})</span>
+                                {certifications.length === 0 ? (
+                                    <p className="text-xs text-gray-400 italic">No additional requirements added.</p>
+                                ) : (
+                                    <div className="flex flex-wrap gap-1.5">
+                                        {certifications.map(cert => (
+                                            <span
+                                                key={cert}
+                                                className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 bg-green-50 text-green-700 border border-green-200 rounded-lg font-medium"
+                                            >
+                                                {cert}
+                                                <button onClick={() => handleRemoveCert(cert)} className="hover:text-red-500 transition-colors">
+                                                    <X size={10} />
+                                                </button>
+                                            </span>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+
                         {/* Card 3: Upload Resumes */}
                         <div className="bg-white border border-gray-200/80 rounded-2xl p-5 shadow-sm flex flex-col hover:shadow-md transition-shadow duration-300">
                             <div className="flex items-center justify-between mb-3">
@@ -645,14 +815,14 @@ const ResumeScreening = () => {
                             </div>
 
                             {/* File Queue - Internal Scroll */}
-                            {files.length > 0 ? (
+                            {filesToDisplay.length > 0 ? (
                                 <div className="mt-3 flex flex-col overflow-hidden">
                                     <div className="flex justify-between text-[10px] text-gray-500 font-bold uppercase tracking-wider mb-2">
-                                        <span>{files.length} files queued</span>
-                                        <button onClick={() => setFiles([])} className="text-red-500 hover:underline normal-case">Remove All</button>
+                                        <span>{filesToDisplay.length} files queued</span>
+                                        <button onClick={() => { setFiles([]); setFilesMetadata([]); sessionStorage.removeItem('rs_filesMetadata'); }} className="text-red-500 hover:underline normal-case">Remove All</button>
                                     </div>
                                     <div className="overflow-y-auto custom-scrollbar max-h-40 space-y-1.5 pr-1">
-                                        {files.map((file, idx) => (
+                                        {filesToDisplay.map((file, idx) => (
                                             <div key={idx} className="flex items-center justify-between p-2.5 bg-gray-50 rounded-lg text-xs border border-gray-100">
                                                 <div className="flex items-center gap-2 overflow-hidden">
                                                     <div className={`w-2 h-2 rounded-full flex-shrink-0 ${idx < batchCompleted ? 'bg-green-500' : isScreening ? 'bg-amber-400 animate-pulse' : 'bg-gray-300'}`} />
@@ -660,7 +830,16 @@ const ResumeScreening = () => {
                                                 </div>
                                                 {isScreening && <Loader2 size={12} className="animate-spin text-green-600 shrink-0" />}
                                                 {!isScreening && (
-                                                    <button onClick={() => setFiles(files.filter(f => f !== file))} className="text-gray-400 hover:text-red-500 p-0.5">
+                                                    <button onClick={() => {
+                                                        setFiles(prev => prev.filter(f => f.name !== file.name));
+                                                        setFilesMetadata(prev => prev.filter(f => f.name !== file.name));
+                                                        const updatedMeta = filesMetadata.filter(f => f.name !== file.name);
+                                                        if (updatedMeta.length > 0) {
+                                                            sessionStorage.setItem('rs_filesMetadata', JSON.stringify(updatedMeta));
+                                                        } else {
+                                                            sessionStorage.removeItem('rs_filesMetadata');
+                                                        }
+                                                    }} className="text-gray-400 hover:text-red-500 p-0.5">
                                                         <X size={14} />
                                                     </button>
                                                 )}
@@ -693,10 +872,19 @@ const ResumeScreening = () => {
                                 Screening Results
                                 {results.length > 0 && (
                                     <span className="text-xs font-semibold text-[#5d8c2c] px-2.5 py-0.5 bg-green-50 rounded-full border border-green-200">
-                                        {results.length} result{results.length !== 1 ? 's' : ''} / {batchTotal || files.length} submitted
+                                        {results.length} result{results.length !== 1 ? 's' : ''} / {batchTotal || filesToDisplay.length} submitted
                                     </span>
                                 )}
                             </h2>
+                        {/* Reset button – always visible */}
+                        <button
+                            onClick={() => setShowResetConfirm(true)}
+                            disabled={results.length === 0 && !jobDescription && filesToDisplay.length === 0 && keywords.length === 0 && certifications.length === 0}
+                            className="px-3.5 py-1.5 border border-red-200 hover:bg-red-50 text-red-500 hover:text-red-700 rounded-xl font-bold text-xs transition-all shadow-sm disabled:opacity-30 disabled:cursor-not-allowed"
+                            title="Reset all screening data"
+                        >
+                            Reset Screening
+                        </button>
 
                         </div>
 
@@ -711,7 +899,7 @@ const ResumeScreening = () => {
                                 <input
                                     type="range"
                                     min="1"
-                                    max={files.length > 0 ? files.length : 20}
+                                    max={filesToDisplay.length > 0 ? filesToDisplay.length : 20}
                                     value={shortlistCount}
                                     onChange={(e) => setShortlistCount(parseInt(e.target.value) || 1)}
                                     className="w-24 accent-[#5d8c2c] cursor-pointer h-1.5 bg-gray-200 rounded-lg appearance-none"
@@ -749,7 +937,7 @@ const ResumeScreening = () => {
                             className="bg-red-50 border border-red-200 rounded-lg p-3 mb-4 flex items-center gap-2 text-sm text-red-700"
                         >
                             <AlertCircle size={16} />
-                            <strong>Action Required:</strong> Candidate count ({shortlistCount}) cannot exceed uploaded resumes ({files.length}).
+                            <strong>Action Required:</strong> Candidate count ({shortlistCount}) cannot exceed uploaded resumes ({filesToDisplay.length}).
                         </motion.div>
                     )}
 
@@ -762,7 +950,7 @@ const ResumeScreening = () => {
                                     batchStatus={batchStatus}
                                     completedCount={batchCompleted}
                                     totalCount={batchTotal}
-                                    filesCount={files.length}
+                                    filesCount={filesToDisplay.length}
                                 />
                             )}
                         </AnimatePresence>
@@ -805,6 +993,37 @@ const ResumeScreening = () => {
                     />
                 )}
             </AnimatePresence>
+
+            {/* Reset Confirmation Dialog */}
+            {showResetConfirm && (
+                <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={() => setShowResetConfirm(false)}>
+                    <div className="bg-white rounded-2xl shadow-2xl max-w-sm w-full overflow-hidden" onClick={e => e.stopPropagation()}>
+                        <div className="p-6">
+                            <div className="w-12 h-12 rounded-full bg-red-100 flex items-center justify-center mx-auto mb-4">
+                                <AlertCircle size={24} className="text-red-600" />
+                            </div>
+                            <h3 className="text-base font-bold text-gray-900 text-center mb-2">Reset Screening Data?</h3>
+                            <p className="text-sm text-gray-500 text-center leading-relaxed">
+                                This will clear all results, uploaded files, keywords, and settings. This action cannot be undone.
+                            </p>
+                        </div>
+                        <div className="flex gap-3 px-6 pb-6">
+                            <button
+                                onClick={() => setShowResetConfirm(false)}
+                                className="flex-1 px-4 py-2.5 text-sm font-semibold text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-xl transition-colors"
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                onClick={handleResetAll}
+                                className="flex-1 px-4 py-2.5 text-sm font-semibold text-white bg-red-600 hover:bg-red-700 rounded-xl transition-colors"
+                            >
+                                Reset All
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 };

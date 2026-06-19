@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import API_URL from '../apiConfig';
 import { BarChart2, Download, FileText, FileSpreadsheet, Loader2, Eye, X, Search, Trash2, AlertTriangle, CheckCircle } from 'lucide-react';
+import { jsPDF } from 'jspdf';
+import autoTable from 'jspdf-autotable';
 
 // ─── Utility: Clean phone numbers ────────────────────────────────────────────
 const cleanPhone = (phone) => {
@@ -18,74 +20,141 @@ const formatDate = (dateStr) => {
     return d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
 };
 
-// ─── Export Utilities ────────────────────────────────────────────────────────
-
-const exportToPDF = async (candidates) => {
-    const rows = candidates.map((c, i) => `
-        <tr>
-            <td>${i + 1}</td>
-            <td>${c.name || '—'}</td>
-            <td>${cleanPhone(c.phone) || '—'}</td>
-            <td>${c.email || '—'}</td>
-            <td>${c.score != null ? `${c.score.toFixed(1)}%` : '—'}</td>
-            <td>${c.role || '—'}</td>
-            <td>${formatDate(c.created_at)}</td>
-        </tr>
-    `).join('');
-
-    const html = `
-        <html>
-        <head>
-            <title>Screened Candidates Report</title>
-            <style>
-                body { font-family: Arial, sans-serif; margin: 30px; color: #111; }
-                h1 { color: #5d8c2c; font-size: 22px; margin-bottom: 4px; }
-                p { color: #555; font-size: 13px; margin-bottom: 20px; }
-                table { width: 100%; border-collapse: collapse; font-size: 12px; }
-                th { background: #5d8c2c; color: white; padding: 8px 10px; text-align: left; font-size: 11px; }
-                td { padding: 7px 10px; border-bottom: 1px solid #e5e7eb; vertical-align: top; }
-                tr:nth-child(even) td { background: #f9fafb; }
-            </style>
-        </head>
-        <body>
-            <h1>Screened Candidates Report</h1>
-            <p>Generated on ${new Date().toLocaleDateString()} — Total: ${candidates.length} candidates</p>
-            <table>
-                <thead>
-                    <tr>
-                        <th>Rank</th>
-                        <th>Candidate Name</th>
-                        <th>Phone</th>
-                        <th>Email</th>
-                        <th>Score</th>
-                        <th>Role</th>
-                        <th>Screened Date</th>
-                    </tr>
-                </thead>
-                <tbody>${rows}</tbody>
-            </table>
-        </body>
-        </html>
-    `;
-
-    const win = window.open('', '_blank');
-    win.document.write(html);
-    win.document.close();
-    win.focus();
-    setTimeout(() => win.print(), 500);
+const stripMarkdown = (text) => {
+    if (!text) return '';
+    return String(text)
+        .replace(/#+\s+/g, '') // remove headings (# Heading)
+        .replace(/[*`~_]/g, '') // remove *, `, ~, _
+        .replace(/^[ \t]*[-*+]\s+/gm, '• ') // replace list bullets with standard dot bullet
+        .replace(/\n\s*\n/g, '\n') // remove empty lines
+        .trim();
 };
 
-const exportToExcel = (candidates) => {
-    const headers = ['Rank', 'Candidate Name', 'Phone Number', 'Email', 'Screening Score', 'Role', 'Screened Date'];
-    const rows = candidates.map((c, i) => [
+// ─── Export Utilities ────────────────────────────────────────────────────────
+
+const AVAILABLE_COLUMNS = [
+    { key: 'name', label: 'Name' },
+    { key: 'phone', label: 'Phone' },
+    { key: 'email', label: 'Email' },
+    { key: 'score', label: 'Score' },
+    { key: 'role', label: 'Role' },
+    { key: 'status', label: 'Status' },
+    { key: 'created_at', label: 'Screened Date' },
+    { key: 'experience', label: 'Total Experience' },
+    { key: 'keyword_match_pct', label: 'Keyword Match %' },
+    { key: 'key_skills_match', label: 'Matched Keywords' },
+    { key: 'candidate_summary', label: 'Summary' },
+    { key: 'certification_match', label: 'Certification Matches' },
+];
+
+// ─── Word Wrap Helper for Excel cell formatting ──────────────────────────────
+const wrapText = (text, maxLength = 60) => {
+    if (!text) return '';
+    const paragraphs = String(text).split('\n');
+    const wrappedParagraphs = paragraphs.map(para => {
+        const words = para.split(/\s+/);
+        let currentLine = '';
+        const lines = [];
+        
+        words.forEach(word => {
+            if ((currentLine + (currentLine ? ' ' : '') + word).length > maxLength) {
+                if (currentLine) {
+                    lines.push(currentLine);
+                }
+                currentLine = word;
+            } else {
+                currentLine += (currentLine ? ' ' : '') + word;
+            }
+        });
+        if (currentLine) {
+            lines.push(currentLine);
+        }
+        return lines.join('\n');
+    });
+    return wrappedParagraphs.join('\n');
+};
+
+const exportToPDF = (candidates, selectedColumns) => {
+    const orientation = selectedColumns.length > 5 ? 'landscape' : 'portrait';
+    const doc = new jsPDF({
+        orientation: orientation,
+        unit: 'mm',
+        format: 'a4'
+    });
+
+    // Add Title Header
+    doc.setFontSize(16);
+    doc.setTextColor(93, 140, 44); // Brand Color #5d8c2c
+    doc.text("Screened Candidates Report", 14, 18);
+    
+    doc.setFontSize(9);
+    doc.setTextColor(100, 100, 100);
+    doc.text(`Generated on: ${new Date().toLocaleDateString()} | Total Candidates: ${candidates.length}`, 14, 24);
+    
+    // Table Columns & Rows
+    const headers = [["Rank", ...selectedColumns.map(col => col.label)]];
+    const body = candidates.map((c, i) => [
         i + 1,
-        `"${(c.name || '').replace(/"/g, '""')}"`,
-        `"${cleanPhone(c.phone)}"`,
-        `"${(c.email || '').replace(/"/g, '""')}"`,
-        c.score != null ? `${c.score.toFixed(1)}%` : '—',
-        `"${(c.role || '').replace(/"/g, '""')}"`,
-        `"${formatDate(c.created_at)}"`
+        ...selectedColumns.map(col => {
+            let val = '—';
+            if (col.key === 'name') val = c.name || '—';
+            else if (col.key === 'phone') val = cleanPhone(c.phone) || '—';
+            else if (col.key === 'email') val = c.email || '—';
+            else if (col.key === 'score') val = c.score != null ? `${c.score.toFixed(2)}%` : '—';
+            else if (col.key === 'role') val = c.role || '—';
+            else if (col.key === 'status') val = c.status || '—';
+            else if (col.key === 'created_at') val = formatDate(c.created_at);
+            else if (col.key === 'experience') val = c.analysis_data?.experience || '—';
+            else if (col.key === 'keyword_match_pct') val = c.analysis_data?.keyword_match_pct != null ? `${Number(c.analysis_data.keyword_match_pct).toFixed(2)}%` : '—';
+            else if (col.key === 'key_skills_match') val = Array.isArray(c.analysis_data?.key_skills_match) ? c.analysis_data.key_skills_match.join(', ') : (c.analysis_data?.key_skills_match || '—');
+            else if (col.key === 'candidate_summary') {
+                const rawSummary = c.analysis_data?.reasoning || c.analysis_data?.candidate_summary || '—';
+                val = rawSummary !== '—' ? stripMarkdown(rawSummary) : '—';
+            }
+            else if (col.key === 'certification_match') val = Array.isArray(c.analysis_data?.certification_match) ? c.analysis_data.certification_match.join(', ') : (c.analysis_data?.certification_match || '—');
+            return val;
+        })
     ]);
+
+    autoTable(doc, {
+        startY: 28,
+        head: headers,
+        body: body,
+        theme: 'striped',
+        headStyles: { fillColor: [93, 140, 44] }, // #5d8c2c
+        styles: { fontSize: 8, cellPadding: 2, overflow: 'linebreak' }
+    });
+
+    doc.save(`screened_candidates_${new Date().toISOString().slice(0, 10)}.pdf`);
+};
+
+const exportToExcel = (candidates, selectedColumns) => {
+    const headers = ['Rank', ...selectedColumns.map(col => col.label)];
+    const rows = candidates.map((c, i) => {
+        const colVals = selectedColumns.map(col => {
+            let val = '—';
+            if (col.key === 'name') val = c.name || '—';
+            else if (col.key === 'phone') val = cleanPhone(c.phone) || '—';
+            else if (col.key === 'email') val = c.email || '—';
+            else if (col.key === 'score') val = c.score != null ? `${c.score.toFixed(2)}%` : '—';
+            else if (col.key === 'role') val = c.role || '—';
+            else if (col.key === 'status') val = c.status || '—';
+            else if (col.key === 'created_at') val = formatDate(c.created_at);
+            else if (col.key === 'experience') val = c.analysis_data?.experience || '—';
+            else if (col.key === 'keyword_match_pct') val = c.analysis_data?.keyword_match_pct != null ? `${Number(c.analysis_data.keyword_match_pct).toFixed(2)}%` : '—';
+            else if (col.key === 'key_skills_match') val = Array.isArray(c.analysis_data?.key_skills_match) ? c.analysis_data.key_skills_match.join(', ') : (c.analysis_data?.key_skills_match || '—');
+            else if (col.key === 'candidate_summary') {
+                const rawSummary = c.analysis_data?.reasoning || c.analysis_data?.candidate_summary || '—';
+                const cleanSummary = rawSummary !== '—' ? stripMarkdown(rawSummary) : '—';
+                val = wrapText(cleanSummary, 60);
+            }
+            else if (col.key === 'certification_match') val = Array.isArray(c.analysis_data?.certification_match) ? c.analysis_data.certification_match.join(', ') : (c.analysis_data?.certification_match || '—');
+            
+            // Excel CSV Cell Escaping
+            return `"${String(val).replace(/"/g, '""')}"`;
+        });
+        return [i + 1, ...colVals];
+    });
 
     const csv = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
@@ -97,18 +166,30 @@ const exportToExcel = (candidates) => {
     URL.revokeObjectURL(url);
 };
 
-const exportToWord = (candidates) => {
-    const rows = candidates.map((c, i) =>
-        `<tr>
-            <td>${i + 1}</td>
-            <td>${c.name || '—'}</td>
-            <td>${cleanPhone(c.phone) || '—'}</td>
-            <td>${c.email || '—'}</td>
-            <td>${c.score != null ? `${c.score.toFixed(1)}%` : '—'}</td>
-            <td>${c.role || '—'}</td>
-            <td>${formatDate(c.created_at)}</td>
-        </tr>`
-    ).join('');
+const exportToWord = (candidates, selectedColumns) => {
+    const headers = selectedColumns.map(col => `<th>${col.label}</th>`).join('');
+    const rows = candidates.map((c, i) => {
+        const colsHtml = selectedColumns.map(col => {
+            let val = '—';
+            if (col.key === 'name') val = c.name || '—';
+            else if (col.key === 'phone') val = cleanPhone(c.phone) || '—';
+            else if (col.key === 'email') val = c.email || '—';
+            else if (col.key === 'score') val = c.score != null ? `${c.score.toFixed(2)}%` : '—';
+            else if (col.key === 'role') val = c.role || '—';
+            else if (col.key === 'status') val = c.status || '—';
+            else if (col.key === 'created_at') val = formatDate(c.created_at);
+            else if (col.key === 'experience') val = c.analysis_data?.experience || '—';
+            else if (col.key === 'keyword_match_pct') val = c.analysis_data?.keyword_match_pct != null ? `${Number(c.analysis_data.keyword_match_pct).toFixed(2)}%` : '—';
+            else if (col.key === 'key_skills_match') val = Array.isArray(c.analysis_data?.key_skills_match) ? c.analysis_data.key_skills_match.join(', ') : (c.analysis_data?.key_skills_match || '—');
+            else if (col.key === 'candidate_summary') {
+                const rawSummary = c.analysis_data?.reasoning || c.analysis_data?.candidate_summary || '—';
+                val = rawSummary !== '—' ? stripMarkdown(rawSummary) : '—';
+            }
+            else if (col.key === 'certification_match') val = Array.isArray(c.analysis_data?.certification_match) ? c.analysis_data.certification_match.join(', ') : (c.analysis_data?.certification_match || '—');
+            return `<td>${val}</td>`;
+        }).join('');
+        return `<tr><td>${i + 1}</td>${colsHtml}</tr>`;
+    }).join('');
 
     const html = `
         <html xmlns:o="urn:schemas-microsoft-com:office:office"
@@ -127,7 +208,7 @@ const exportToWord = (candidates) => {
         <h1>Screened Candidates Report</h1>
         <p>Generated: ${new Date().toLocaleDateString()} | Total: ${candidates.length}</p>
         <table>
-            <thead><tr><th>Rank</th><th>Name</th><th>Phone</th><th>Email</th><th>Score</th><th>Role</th><th>Screened Date</th></tr></thead>
+            <thead><tr><th>Rank</th>${headers}</tr></thead>
             <tbody>${rows}</tbody>
         </table>
         </body></html>
@@ -141,6 +222,155 @@ const exportToWord = (candidates) => {
     a.click();
     URL.revokeObjectURL(url);
 };
+
+const ExportConfigModal = ({ isOpen, onClose, onExport, candidates }) => {
+    const [format, setFormat] = useState('excel'); // 'pdf' | 'excel' | 'word'
+    const [selectedCols, setSelectedCols] = useState(
+        AVAILABLE_COLUMNS.map(col => col.key)
+    );
+
+    if (!isOpen) return null;
+
+    const handleToggleCol = (key) => {
+        setSelectedCols(prev => 
+            prev.includes(key) ? prev.filter(k => k !== key) : [...prev, key]
+        );
+    };
+
+    const handleSelectAll = () => {
+        setSelectedCols(AVAILABLE_COLUMNS.map(col => col.key));
+    };
+
+    const handleDeselectAll = () => {
+        setSelectedCols([]);
+    };
+
+    const handleSubmit = () => {
+        if (selectedCols.length === 0) {
+            alert('Please select at least one column to export.');
+            return;
+        }
+        const columns = AVAILABLE_COLUMNS.filter(col => selectedCols.includes(col.key));
+        onExport(format, columns);
+    };
+
+    return (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[60] flex items-center justify-center p-4" onClick={onClose}>
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-xl overflow-hidden flex flex-col relative max-h-[90vh]" onClick={e => e.stopPropagation()}>
+                {/* Header */}
+                <div className="px-6 py-4 border-b border-gray-150 flex justify-between items-center bg-gray-50/50">
+                    <div>
+                        <h3 className="text-lg font-bold text-gray-900">Export Configuration</h3>
+                        <p className="text-xs text-gray-400 mt-0.5">Customize your report format and columns</p>
+                    </div>
+                    <button onClick={onClose} className="p-1.5 hover:bg-gray-100 rounded-lg text-gray-400 hover:text-gray-600 transition-colors">
+                        <X size={20} />
+                    </button>
+                </div>
+
+                <div className="p-6 overflow-y-auto space-y-6">
+                    {/* Format Selection */}
+                    <div>
+                        <h4 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">Select Export Format</h4>
+                        <div className="grid grid-cols-3 gap-3">
+                            {[
+                                { id: 'excel', label: 'Excel (CSV)', desc: 'Spreadsheet format', icon: FileSpreadsheet, color: 'text-green-600 bg-green-50 border-green-200' },
+                                { id: 'pdf', label: 'PDF Document', desc: 'Printable report', icon: FileText, color: 'text-red-600 bg-red-50 border-red-200' },
+                                { id: 'word', label: 'Word Document', desc: 'Editable document', icon: FileText, color: 'text-blue-600 bg-blue-50 border-blue-200' },
+                            ].map((fmt) => {
+                                const Icon = fmt.icon;
+                                const isSelected = format === fmt.id;
+                                return (
+                                    <button
+                                        key={fmt.id}
+                                        onClick={() => setFormat(fmt.id)}
+                                        className={`flex flex-col items-center justify-center text-center p-4 rounded-xl border-2 transition-all gap-2 ${
+                                            isSelected 
+                                                ? 'border-[#5d8c2c] bg-green-50/20 shadow-sm' 
+                                                : 'border-gray-200 hover:border-gray-300'
+                                        }`}
+                                    >
+                                        <div className={`p-2.5 rounded-lg ${fmt.color.split(' ')[1]} ${fmt.color.split(' ')[0]}`}>
+                                            <Icon size={20} />
+                                        </div>
+                                        <div>
+                                            <div className="text-xs font-bold text-gray-900">{fmt.label}</div>
+                                            <div className="text-[10px] text-gray-450 mt-0.5">{fmt.desc}</div>
+                                        </div>
+                                    </button>
+                                );
+                            })}
+                        </div>
+                    </div>
+
+                    {/* Column Selection */}
+                    <div>
+                        <div className="flex justify-between items-center mb-3">
+                            <h4 className="text-xs font-bold text-gray-450 uppercase tracking-wider">Select Columns to Include</h4>
+                            <div className="flex gap-2">
+                                <button 
+                                    onClick={handleSelectAll}
+                                    className="text-xs font-bold text-[#5d8c2c] hover:underline"
+                                >
+                                    Select All
+                                </button>
+                                <span className="text-gray-300 text-xs">|</span>
+                                <button 
+                                    onClick={handleDeselectAll}
+                                    className="text-xs font-bold text-red-550 hover:underline"
+                                >
+                                    Deselect All
+                                </button>
+                            </div>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-3 bg-gray-50 border border-gray-150 p-4 rounded-xl">
+                            {AVAILABLE_COLUMNS.map((col) => {
+                                const isChecked = selectedCols.includes(col.key);
+                                return (
+                                    <label 
+                                        key={col.key} 
+                                        className={`flex items-center gap-3 px-3 py-2.5 rounded-lg border cursor-pointer transition-colors ${
+                                            isChecked 
+                                                ? 'bg-white border-[#5d8c2c]/30 text-gray-950 font-bold shadow-sm' 
+                                                : 'bg-white/50 border-gray-200 text-gray-550 hover:bg-white'
+                                        }`}
+                                    >
+                                        <input 
+                                            type="checkbox" 
+                                            checked={isChecked}
+                                            onChange={() => handleToggleCol(col.key)}
+                                            className="rounded text-[#5d8c2c] focus:ring-[#5d8c2c] w-4 h-4 border-gray-300"
+                                        />
+                                        <span className="text-xs">{col.label}</span>
+                                    </label>
+                                );
+                            })}
+                        </div>
+                    </div>
+                </div>
+
+                {/* Footer */}
+                <div className="px-6 py-4 bg-gray-50 border-t border-gray-150 flex gap-3 justify-end">
+                    <button
+                        onClick={onClose}
+                        className="px-4 py-2 text-xs font-bold text-gray-500 hover:text-gray-700 transition-colors"
+                    >
+                        Cancel
+                    </button>
+                    <button
+                        onClick={handleSubmit}
+                        className="px-5 py-2.5 bg-[#5d8c2c] text-white hover:bg-[#4a7023] rounded-xl font-bold text-xs shadow-md transition-all flex items-center gap-1.5"
+                    >
+                        <Download size={14} />
+                        Generate & Export ({candidates.length})
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+};
+
 
 // ─── Confirm Modal ───────────────────────────────────────────────────────────
 
@@ -390,12 +620,13 @@ const ScreenedCandidates = () => {
     const [candidates, setCandidates] = useState([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
-    const [showExportMenu, setShowExportMenu] = useState(false);
+    const [showExportModal, setShowExportModal] = useState(false);
     const [analysisCandidate, setAnalysisCandidate] = useState(null);
     const [resumeCandidate, setResumeCandidate] = useState(null);
     const [resetting, setResetting] = useState(false);
     const [confirmDialog, setConfirmDialog] = useState(null); // { type: 'reset' | 'delete', id?: number }
     const [toast, setToast] = useState(null); // { message, type }
+    const [searchQuery, setSearchQuery] = useState('');
 
     const showToast = (message, type = 'success') => {
         setToast({ message, type });
@@ -482,11 +713,16 @@ const ScreenedCandidates = () => {
         fetchCandidates();
     }, []);
 
-    useEffect(() => {
-        const close = (e) => { if (!e.target.closest('#export-menu-container')) setShowExportMenu(false); };
-        document.addEventListener('click', close);
-        return () => document.removeEventListener('click', close);
-    }, []);
+    // Determine whether any candidate has keyword data
+    const hasKeywordData = candidates.some(c => c.analysis_data?.keyword_match_pct != null);
+
+    // Filtered candidates based on search query
+    const filteredCandidates = searchQuery.trim()
+        ? candidates.filter(c =>
+            (c.name || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+            (c.email || '').toLowerCase().includes(searchQuery.toLowerCase())
+          )
+        : candidates;
 
     const getScoreBadge = (score) => {
         if (score == null) return { bg: 'bg-gray-100', text: 'text-gray-500', label: '—' };
@@ -517,7 +753,7 @@ const ScreenedCandidates = () => {
                             </p>
                         </div>
 
-                        <div className="flex items-center gap-3">
+                        <div className="flex items-center gap-3 flex-wrap">
                             <div className="bg-white text-[#5d8c2c] px-4 py-2.5 rounded-xl text-sm font-bold border border-gray-200 flex items-center gap-2 shadow-sm">
                                 <BarChart2 size={16} className="text-green-600" />
                                 <span className="text-xs text-gray-400 uppercase tracking-wide">Total</span>
@@ -540,47 +776,31 @@ const ScreenedCandidates = () => {
                                         Reset Candidates
                                     </button>
 
-                                    <div id="export-menu-container" className="relative">
-                                        <button
-                                            onClick={() => setShowExportMenu(v => !v)}
-                                            className="flex items-center gap-2 px-5 py-2.5 bg-[#5d8c2c] text-white rounded-xl font-semibold text-sm hover:bg-[#4a7023] transition-all shadow-md hover:shadow-lg"
-                                        >
-                                            <Download size={16} />
-                                            Export Data
-                                        </button>
-
-                                        {showExportMenu && (
-                                            <div className="absolute right-0 mt-2 w-52 bg-white rounded-xl shadow-xl border border-gray-100 z-50 overflow-hidden">
-                                                <div className="p-2 space-y-1">
-                                                    <button
-                                                        onClick={() => { exportToPDF(candidates); setShowExportMenu(false); }}
-                                                        className="w-full flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm font-medium text-gray-700 hover:bg-red-50 hover:text-red-700 transition-colors"
-                                                    >
-                                                        <FileText size={16} className="text-red-500" />
-                                                        Export as PDF
-                                                    </button>
-                                                    <button
-                                                        onClick={() => { exportToExcel(candidates); setShowExportMenu(false); }}
-                                                        className="w-full flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm font-medium text-gray-700 hover:bg-green-50 hover:text-green-700 transition-colors"
-                                                    >
-                                                        <FileSpreadsheet size={16} className="text-green-600" />
-                                                        Export as Excel
-                                                    </button>
-                                                    <button
-                                                        onClick={() => { exportToWord(candidates); setShowExportMenu(false); }}
-                                                        className="w-full flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm font-medium text-gray-700 hover:bg-blue-50 hover:text-blue-700 transition-colors"
-                                                    >
-                                                        <FileText size={16} className="text-blue-500" />
-                                                        Export as Word
-                                                    </button>
-                                                </div>
-                                            </div>
-                                        )}
-                                    </div>
+                                    <button
+                                        onClick={() => setShowExportModal(true)}
+                                        className="flex items-center gap-2 px-5 py-2.5 bg-[#5d8c2c] text-white rounded-xl font-semibold text-sm hover:bg-[#4a7023] transition-all shadow-md hover:shadow-lg"
+                                    >
+                                        <Download size={16} />
+                                        Export Data
+                                    </button>
                                 </div>
                             )}
                         </div>
                     </div>
+
+                    {/* Search bar */}
+                    {candidates.length > 0 && (
+                        <div className="mt-4 relative">
+                            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                            <input
+                                type="text"
+                                value={searchQuery}
+                                onChange={(e) => setSearchQuery(e.target.value)}
+                                placeholder="Search by name or email…"
+                                className="w-full max-w-sm pl-8 pr-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-[#5d8c2c]/30 focus:border-[#5d8c2c]/50 bg-gray-50"
+                            />
+                        </div>
+                    )}
                 </div>
 
                 {/* ── Error ── */}
@@ -610,33 +830,50 @@ const ScreenedCandidates = () => {
                                 <thead>
                                     <tr className="bg-gray-50 border-b border-gray-200">
                                         <th className="px-4 py-4 text-left font-semibold text-gray-500 uppercase tracking-wide text-xs w-14">Rank</th>
-                                        <th className="px-4 py-4 text-left font-semibold text-gray-500 uppercase tracking-wide text-xs">Candidate Name</th>
-                                        <th className="px-4 py-4 text-left font-semibold text-gray-500 uppercase tracking-wide text-xs">Phone Number</th>
+                                        <th className="px-4 py-4 text-left font-semibold text-gray-500 uppercase tracking-wide text-xs min-w-[160px]">Candidate</th>
+                                        <th className="px-4 py-4 text-left font-semibold text-gray-500 uppercase tracking-wide text-xs">Phone</th>
                                         <th className="px-4 py-4 text-left font-semibold text-gray-500 uppercase tracking-wide text-xs">Email</th>
                                         <th className="px-4 py-4 text-left font-semibold text-gray-500 uppercase tracking-wide text-xs w-24">Score</th>
-                                        <th className="px-4 py-4 text-center font-semibold text-gray-500 uppercase tracking-wide text-xs w-24">Analysis</th>
-                                        <th className="px-4 py-4 text-center font-semibold text-gray-500 uppercase tracking-wide text-xs w-36">Actions</th>
+                                        {hasKeywordData && (
+                                            <th className="px-4 py-4 text-left font-semibold text-gray-500 uppercase tracking-wide text-xs w-28">Keyword Score</th>
+                                        )}
+                                        <th className="px-4 py-4 text-left font-semibold text-gray-500 uppercase tracking-wide text-xs min-w-[260px]">AI Summary</th>
+                                        <th className="px-4 py-4 text-center font-semibold text-gray-500 uppercase tracking-wide text-xs w-32">Actions</th>
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y divide-gray-100">
-                                    {candidates.map((c, idx) => {
+                                    {filteredCandidates.length === 0 ? (
+                                        <tr>
+                                            <td colSpan={hasKeywordData ? 8 : 7} className="px-4 py-10 text-center text-gray-400 text-sm">
+                                                No candidates match your search.
+                                            </td>
+                                        </tr>
+                                    ) : filteredCandidates.map((c, idx) => {
                                         const badge = getScoreBadge(c.score);
+                                        const rawSummary = c.analysis_data?.reasoning || c.analysis_data?.candidate_summary || '';
+                                        const plainSummary = stripMarkdown(rawSummary);
+                                        const summaryPreview = plainSummary.length > 160
+                                            ? plainSummary.slice(0, 160) + '…'
+                                            : plainSummary || '—';
+                                        const keywordPct = c.analysis_data?.keyword_match_pct;
+                                        const keywordMatched = c.analysis_data?.key_skills_match;
                                         return (
-                                            <tr key={c.id} className="hover:bg-gray-50 transition-colors">
+                                            <tr key={c.id} className="hover:bg-gray-50/70 transition-colors">
                                                 <td className="px-4 py-4">
                                                     <span className="inline-flex items-center justify-center w-8 h-8 rounded-full bg-[#5d8c2c]/10 text-[#5d8c2c] font-bold text-sm">
                                                         #{idx + 1}
                                                     </span>
                                                 </td>
                                                 <td className="px-4 py-4">
-                                                    <span className="font-semibold text-gray-900">{c.name || '—'}</span>
+                                                    <span className="font-semibold text-gray-900 block">{c.name || '—'}</span>
+                                                    {c.role && <span className="text-xs text-gray-400 mt-0.5 block">{c.role}</span>}
                                                 </td>
                                                 <td className="px-4 py-4 text-gray-600 font-mono text-xs">
                                                     {cleanPhone(c.phone) || <span className="text-gray-300 italic text-xs font-sans">Not provided</span>}
                                                 </td>
                                                 <td className="px-4 py-4 text-gray-600">
                                                     {c.email ? (
-                                                        <a href={`mailto:${c.email}`} className="text-[#5d8c2c] hover:underline">{c.email}</a>
+                                                        <a href={`mailto:${c.email}`} className="text-[#5d8c2c] hover:underline text-xs">{c.email}</a>
                                                     ) : '—'}
                                                 </td>
                                                 <td className="px-4 py-4">
@@ -644,14 +881,40 @@ const ScreenedCandidates = () => {
                                                         {badge.label}
                                                     </span>
                                                 </td>
-                                                <td className="px-4 py-4 text-center">
+                                                {hasKeywordData && (
+                                                    <td className="px-4 py-4">
+                                                        {keywordPct != null ? (
+                                                            <div>
+                                                                <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold ${
+                                                                    keywordPct >= 75 ? 'bg-green-50 text-green-700' :
+                                                                    keywordPct >= 40 ? 'bg-yellow-50 text-yellow-700' :
+                                                                    'bg-red-50 text-red-600'
+                                                                }`}>
+                                                                    {Number(keywordPct).toFixed(0)}%
+                                                                </span>
+                                                                {Array.isArray(keywordMatched) && keywordMatched.length > 0 && (
+                                                                    <div className="flex flex-wrap gap-1 mt-1.5">
+                                                                        {keywordMatched.slice(0, 3).map((kw, i) => (
+                                                                            <span key={i} className="text-[10px] px-1.5 py-0.5 bg-green-50 text-green-700 rounded border border-green-100">{kw}</span>
+                                                                        ))}
+                                                                        {keywordMatched.length > 3 && <span className="text-[10px] text-gray-400">+{keywordMatched.length - 3}</span>}
+                                                                    </div>
+                                                                )}
+                                                            </div>
+                                                        ) : (
+                                                            <span className="text-gray-300 text-xs">—</span>
+                                                        )}
+                                                    </td>
+                                                )}
+                                                <td className="px-4 py-4 max-w-xs">
+                                                    <p className="text-xs text-gray-600 leading-relaxed mb-2">{summaryPreview}</p>
                                                     <button
                                                         onClick={() => setAnalysisCandidate(c)}
-                                                        className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50 text-indigo-700 rounded-lg text-xs font-semibold hover:bg-indigo-100 hover:shadow-sm transition-all border border-indigo-200"
-                                                        title="View detailed analysis"
+                                                        className="inline-flex items-center gap-1 text-[11px] px-2.5 py-1 bg-indigo-50 text-indigo-700 rounded-lg font-semibold hover:bg-indigo-100 transition-all border border-indigo-200"
+                                                        title="View full AI analysis"
                                                     >
-                                                        <Search size={13} />
-                                                        Analysis
+                                                        <Search size={11} />
+                                                        Full Analysis
                                                     </button>
                                                 </td>
                                                 <td className="px-4 py-4 text-center">
@@ -762,6 +1025,23 @@ const ScreenedCandidates = () => {
                     </div>
                 </div>
             )}
+
+            {/* ── Export Config Modal ── */}
+            <ExportConfigModal
+                isOpen={showExportModal}
+                onClose={() => setShowExportModal(false)}
+                candidates={candidates}
+                onExport={(format, columns) => {
+                    setShowExportModal(false);
+                    if (format === 'pdf') {
+                        exportToPDF(candidates, columns);
+                    } else if (format === 'excel') {
+                        exportToExcel(candidates, columns);
+                    } else if (format === 'word') {
+                        exportToWord(candidates, columns);
+                    }
+                }}
+            />
         </div>
     );
 };

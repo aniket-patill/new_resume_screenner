@@ -32,6 +32,8 @@ function ClerkSyncWrapper({ children }) {
                 const data = await response.json();
                 if (data.access) {
                     localStorage.setItem('token', data.access);
+                    localStorage.setItem('role', data.role || 'user');
+                    localStorage.setItem('email', data.email || emailAddress);
                     setSynced(true);
                 } else {
                     throw new Error("No token returned from backend sync.");
