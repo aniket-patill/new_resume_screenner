@@ -324,15 +324,31 @@ const Candidates = () => {
             alert("No candidate data available to export.");
             return;
         }
-        const data = candidates.map((c, index) => ({
-            "S.No": index + 1,
-            "Name": c.name,
-            "Email": c.email,
-            "Job Role": c.role || 'N/A',
-            "Current Stage": c.stage,
-            "Status": c.status,
-            "Score": c.score !== undefined ? `${c.score}%` : '0%'
-        }));
+
+        const stripMarkdown = (text) => {
+            if (!text) return '';
+            return String(text)
+                .replace(/#+\s+/g, '') // remove headings (# Heading)
+                .replace(/[*`~_]/g, '') // remove *, `, ~, _
+                .replace(/^[ \t]*[-*+]\s+/gm, '• ') // replace list bullets with standard dot bullet
+                .replace(/\n\s*\n/g, '\n') // remove empty lines
+                .trim();
+        };
+
+        const data = candidates.map((c, index) => {
+            const rawSummary = c.analysis_data?.candidate_summary || c.analysis_data?.reasoning || '—';
+            const summaryClean = rawSummary !== '—' ? stripMarkdown(rawSummary) : '—';
+            return {
+                "S.No": index + 1,
+                "Name": c.name,
+                "Email": c.email,
+                "Job Role": c.role || 'N/A',
+                "Current Stage": c.stage,
+                "Status": c.status,
+                "Score": c.score !== undefined ? `${c.score}%` : '0%',
+                "Summary": summaryClean
+            };
+        });
         
         const worksheet = XLSX.utils.json_to_sheet(data);
         const workbook = XLSX.utils.book_new();
@@ -346,7 +362,12 @@ const Candidates = () => {
                 maxLen[key] = Math.max(maxLen[key] || 0, val.length, key.length);
             });
         });
-        worksheet["!cols"] = Object.keys(maxLen).map(key => ({ wch: maxLen[key] + 3 }));
+        worksheet["!cols"] = Object.keys(maxLen).map(key => {
+            if (key === "Summary") {
+                return { wch: 50 };
+            }
+            return { wch: Math.min(Math.max(maxLen[key] + 3, 10), 60) };
+        });
 
         XLSX.writeFile(workbook, `Candidates_Export_Full_${new Date().toISOString().slice(0, 10)}.xlsx`);
         setShowExportDropdown(false);
@@ -358,7 +379,21 @@ const Candidates = () => {
             return;
         }
 
-        const doc = new jsPDF();
+        const stripMarkdown = (text) => {
+            if (!text) return '';
+            return String(text)
+                .replace(/#+\s+/g, '') // remove headings (# Heading)
+                .replace(/[*`~_]/g, '') // remove *, `, ~, _
+                .replace(/^[ \t]*[-*+]\s+/gm, '• ') // replace list bullets with standard dot bullet
+                .replace(/\n\s*\n/g, '\n') // remove empty lines
+                .trim();
+        };
+
+        const doc = new jsPDF({
+            orientation: 'landscape',
+            unit: 'mm',
+            format: 'a4'
+        });
         
         // Add Title Header
         doc.setFontSize(18);
@@ -371,16 +406,21 @@ const Candidates = () => {
         doc.text(`Total Candidates: ${candidates.length}`, 14, 31);
         
         // Table Columns & Rows
-        const headers = [["S.No", "Name", "Email", "Role", "Stage", "Status", "Score"]];
-        const body = candidates.map((c, index) => [
-            index + 1,
-            c.name,
-            c.email,
-            c.role || 'N/A',
-            c.stage,
-            c.status,
-            c.score !== undefined ? `${c.score}%` : '0%'
-        ]);
+        const headers = [["S.No", "Name", "Email", "Role", "Stage", "Status", "Score", "Summary"]];
+        const body = candidates.map((c, index) => {
+            const rawSummary = c.analysis_data?.candidate_summary || c.analysis_data?.reasoning || '—';
+            const summaryClean = rawSummary !== '—' ? stripMarkdown(rawSummary) : '—';
+            return [
+                index + 1,
+                c.name,
+                c.email,
+                c.role || 'N/A',
+                c.stage,
+                c.status,
+                c.score !== undefined ? `${c.score}%` : '0%',
+                summaryClean
+            ];
+        });
 
         autoTable(doc, {
             startY: 36,
@@ -388,9 +428,10 @@ const Candidates = () => {
             body: body,
             theme: 'striped',
             headStyles: { fillColor: [93, 140, 44] }, // #5d8c2c
-            styles: { fontSize: 8, cellPadding: 2 },
+            styles: { fontSize: 8, cellPadding: 2, overflow: 'linebreak' },
             columnStyles: {
-                2: { cellWidth: 45 }
+                2: { cellWidth: 45 },
+                7: { cellWidth: 60 } // Summary column
             }
         });
 
@@ -404,17 +445,32 @@ const Candidates = () => {
             return;
         }
 
-        const tableRows = candidates.map((c, index) => `
-            <tr>
-                <td>${index + 1}</td>
-                <td style="font-weight: bold;">${c.name}</td>
-                <td>${c.email}</td>
-                <td>${c.role || 'N/A'}</td>
-                <td>${c.stage}</td>
-                <td>${c.status}</td>
-                <td>${c.score !== undefined ? `${c.score}%` : '0%'}</td>
-            </tr>
-        `).join('');
+        const stripMarkdown = (text) => {
+            if (!text) return '';
+            return String(text)
+                .replace(/#+\s+/g, '') // remove headings (# Heading)
+                .replace(/[*`~_]/g, '') // remove *, `, ~, _
+                .replace(/^[ \t]*[-*+]\s+/gm, '• ') // replace list bullets with standard dot bullet
+                .replace(/\n\s*\n/g, '\n') // remove empty lines
+                .trim();
+        };
+
+        const tableRows = candidates.map((c, index) => {
+            const rawSummary = c.analysis_data?.candidate_summary || c.analysis_data?.reasoning || '—';
+            const summaryClean = rawSummary !== '—' ? stripMarkdown(rawSummary) : '—';
+            return `
+                <tr>
+                    <td>${index + 1}</td>
+                    <td style="font-weight: bold;">${c.name}</td>
+                    <td>${c.email}</td>
+                    <td>${c.role || 'N/A'}</td>
+                    <td>${c.stage}</td>
+                    <td>${c.status}</td>
+                    <td>${c.score !== undefined ? `${c.score}%` : '0%'}</td>
+                    <td>${summaryClean}</td>
+                </tr>
+            `;
+        }).join('');
 
         const htmlContent = `
         <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">
@@ -447,6 +503,7 @@ const Candidates = () => {
                         <th>Current Stage</th>
                         <th>Status</th>
                         <th>Score</th>
+                        <th>Summary</th>
                     </tr>
                 </thead>
                 <tbody>

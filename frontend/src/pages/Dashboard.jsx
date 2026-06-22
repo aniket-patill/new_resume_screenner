@@ -60,6 +60,16 @@ const Dashboard = () => {
     const handleExportExcel = () => {
         if (!data) return;
         
+        const stripMarkdown = (text) => {
+            if (!text) return '';
+            return String(text)
+                .replace(/#+\s+/g, '') // remove headings (# Heading)
+                .replace(/[*`~_]/g, '') // remove *, `, ~, _
+                .replace(/^[ \t]*[-*+]\s+/gm, '• ') // replace list bullets with standard dot bullet
+                .replace(/\n\s*\n/g, '\n') // remove empty lines
+                .trim();
+        };
+
         // 1. Summary Sheet
         const summaryData = [
             { "Metric": "Total Resumes", "Value": data.candidate_stats?.total_resumes ?? 0 },
@@ -91,7 +101,8 @@ const Dashboard = () => {
             "Role": c.role || '—',
             "Score": c.score != null ? `${c.score.toFixed(1)}%` : '0%',
             "Experience": c.experience || '—',
-            "Certifications": Array.isArray(c.certifications) ? c.certifications.join(', ') : (c.certifications || '—')
+            "Certifications": Array.isArray(c.certifications) ? c.certifications.join(', ') : (c.certifications || '—'),
+            "Summary": c.candidate_summary && c.candidate_summary !== 'N/A' ? stripMarkdown(c.candidate_summary) : '—'
         }));
         const wsTopCandidates = XLSX.utils.json_to_sheet(topCandidatesData);
 
@@ -105,7 +116,8 @@ const Dashboard = () => {
                 "Role": c.role || '—',
                 "Score": c.score != null ? `${c.score.toFixed(1)}%` : '0%',
                 "Experience": c.experience || '—',
-                "Certifications": Array.isArray(c.certifications) ? c.certifications.join(', ') : (c.certifications || '—')
+                "Certifications": Array.isArray(c.certifications) ? c.certifications.join(', ') : (c.certifications || '—'),
+                "Summary": c.candidate_summary && c.candidate_summary !== 'N/A' ? stripMarkdown(c.candidate_summary) : '—'
             }));
         const wsScreenedCandidates = XLSX.utils.json_to_sheet(screenedCandidatesData);
 
@@ -134,11 +146,17 @@ const Dashboard = () => {
         XLSX.utils.book_append_sheet(wb, wsActivity, "Activity Logs");
 
         // Auto-fit column widths helper
-        const autofitColumns = (ws) => {
+        const autofitColumns = (ws, isCandidateSheet = false) => {
             if (!ws['!ref']) return;
             const range = XLSX.utils.decode_range(ws['!ref']);
             const cols = [];
             for (let C = range.s.c; C <= range.e.c; ++C) {
+                const headerCell = ws[XLSX.utils.encode_cell({ r: range.s.r, c: C })];
+                const headerVal = headerCell ? String(headerCell.v) : '';
+                if (isCandidateSheet && headerVal === 'Summary') {
+                    cols.push({ wch: 50 });
+                    continue;
+                }
                 let maxLen = 10;
                 for (let R = range.s.r; R <= range.e.r; ++R) {
                     const cell = ws[XLSX.utils.encode_cell({ r: R, c: C })];
@@ -146,14 +164,14 @@ const Dashboard = () => {
                         maxLen = Math.max(maxLen, String(cell.v).length);
                     }
                 }
-                cols.push({ wch: maxLen + 3 });
+                cols.push({ wch: Math.min(maxLen + 3, 60) });
             }
             ws['!cols'] = cols;
         };
 
         autofitColumns(wsSummary);
-        autofitColumns(wsTopCandidates);
-        autofitColumns(wsScreenedCandidates);
+        autofitColumns(wsTopCandidates, true);
+        autofitColumns(wsScreenedCandidates, true);
         autofitColumns(wsKeywords);
         autofitColumns(wsActivity);
 
