@@ -86,8 +86,8 @@ const AVAILABLE_COLUMNS = [
     { key: 'email', label: 'Email' },
     { key: 'score', label: 'Score' },
     { key: 'role', label: 'Role' },
-    { key: 'status', label: 'Status' },
-    { key: 'created_at', label: 'Screened Date' },
+    { key: 'location', label: 'Location' },
+    { key: 'education_details', label: 'Education' },
     { key: 'experience', label: 'Total Experience' },
     { key: 'keyword_match_pct', label: 'Keyword Match %' },
     { key: 'key_skills_match', label: 'Matched Keywords' },
@@ -96,11 +96,10 @@ const AVAILABLE_COLUMNS = [
     { key: 'custom_prompt_matches', label: 'Custom Req. Matches' },
     { key: 'missing_skills', label: 'Missing Skills / Gaps' },
     { key: 'reasoning', label: 'AI Evaluation Reasoning' },
-    { key: 'stage', label: 'Candidate Stage' },
 ];
 
 const exportToPDF = (candidates, selectedColumns) => {
-    const compactKeys = ['name', 'phone', 'email', 'score', 'role', 'status', 'created_at', 'experience', 'keyword_match_pct', 'stage'];
+    const compactKeys = ['name', 'phone', 'email', 'score', 'role', 'location', 'education_details', 'experience', 'keyword_match_pct'];
     const compactCols = selectedColumns.filter(col => compactKeys.includes(col.key));
     const detailKeys = ['key_skills_match', 'missing_skills', 'candidate_summary', 'certification_match', 'custom_prompt_matches', 'reasoning'];
     const hasDetails = selectedColumns.some(col => detailKeys.includes(col.key));
@@ -123,14 +122,13 @@ const exportToPDF = (candidates, selectedColumns) => {
                 const a = c.analysis || {};
                 if (col.key === 'name') return c.name || '—';
                 if (col.key === 'phone') return cleanPhone(c.candidate?.phone || c.phone) || '—';
-                if (col.key === 'email') return c.candidate?.email || c.email || '—';
+                if (col.key === 'email') { const e = c.candidate?.email || c.email; return (e && !e.startsWith('no-email-')) ? e : '—'; }
                 if (col.key === 'score') return c.score != null ? `${Math.round(c.score)}%` : '—';
                 if (col.key === 'role') return c.role || c.candidate?.role || '—';
-                if (col.key === 'status') return c.status || c.candidate?.status || '—';
-                if (col.key === 'created_at') return formatDate(c.created_at || c.candidate?.created_at);
+                if (col.key === 'location') return a.location || '—';
+                if (col.key === 'education_details') return a.education_details || '—';
                 if (col.key === 'experience') return a.experience || '—';
                 if (col.key === 'keyword_match_pct') return a.keyword_match_pct != null ? `${Number(a.keyword_match_pct).toFixed(0)}%` : '—';
-                if (col.key === 'stage') return c.stage || c.candidate?.stage || '—';
                 return '—';
             })
         ]);
@@ -157,7 +155,9 @@ const exportToPDF = (candidates, selectedColumns) => {
             doc.setFontSize(9);
             doc.setTextColor(100, 100, 100);
             doc.text(`Rank: #${idx + 1}  |  Score: ${c.score != null ? Math.round(c.score) : 0}%  |  Role: ${c.role || c.candidate?.role || '—'}`, 14, 24);
-            doc.text(`Email: ${c.email || c.candidate?.email || '—'}  |  Phone: ${cleanPhone(c.phone || c.candidate?.phone) || '—'}`, 14, 29);
+            const rawEmail = c.email || c.candidate?.email;
+            const displayEmail = (rawEmail && !rawEmail.startsWith('no-email-')) ? rawEmail : '—';
+            doc.text(`Email: ${displayEmail}  |  Phone: ${cleanPhone(c.phone || c.candidate?.phone) || '—'}`, 14, 29);
             
             const detailRows = [];
             
@@ -210,11 +210,11 @@ const exportToExcel = (candidates, selectedColumns) => {
         selectedColumns.forEach(col => {
             if (col.key === 'name') row[col.label] = c.name || '—';
             else if (col.key === 'phone') row[col.label] = cleanPhone(c.candidate?.phone || c.phone) || '—';
-            else if (col.key === 'email') row[col.label] = c.candidate?.email || c.email || '—';
+            else if (col.key === 'email') { const e = c.candidate?.email || c.email; row[col.label] = (e && !e.startsWith('no-email-')) ? e : '—'; }
             else if (col.key === 'score') row[col.label] = c.score != null ? `${c.score.toFixed(2)}%` : '—';
             else if (col.key === 'role') row[col.label] = c.role || c.candidate?.role || '—';
-            else if (col.key === 'status') row[col.label] = c.status || c.candidate?.status || '—';
-            else if (col.key === 'created_at') row[col.label] = formatDate(c.created_at || c.candidate?.created_at);
+            else if (col.key === 'location') row[col.label] = a.location || '—';
+            else if (col.key === 'education_details') row[col.label] = a.education_details || '—';
             else if (col.key === 'experience') row[col.label] = a.experience || '—';
             else if (col.key === 'keyword_match_pct') row[col.label] = a.keyword_match_pct != null ? `${Number(a.keyword_match_pct).toFixed(2)}%` : '—';
             else if (col.key === 'key_skills_match') row[col.label] = Array.isArray(a.key_skills_match) ? a.key_skills_match.join(', ') : '—';
@@ -223,7 +223,6 @@ const exportToExcel = (candidates, selectedColumns) => {
             else if (col.key === 'custom_prompt_matches') row[col.label] = Array.isArray(a.custom_prompt_matches) ? a.custom_prompt_matches.join(', ') : '—';
             else if (col.key === 'missing_skills') row[col.label] = Array.isArray(a.missing_skills) ? a.missing_skills.join(', ') : '—';
             else if (col.key === 'reasoning') row[col.label] = stripMarkdown(a.reasoning || '—');
-            else if (col.key === 'stage') row[col.label] = c.stage || c.candidate?.stage || '—';
             else row[col.label] = '—';
         });
         return row;
@@ -432,7 +431,7 @@ const CandidateCard = ({ candidate, rank, onClick, onChat }) => {
                                 )}
                             </div>
                             <div className="text-xs text-slate-400 font-medium truncate mt-0.5">
-                                {candidate.candidate?.email || '—'}
+                                {(candidate.candidate?.email && !candidate.candidate.email.startsWith('no-email-')) ? candidate.candidate.email : '—'}
                             </div>
                         </div>
                     </div>
@@ -775,6 +774,7 @@ const ResumeScreening = () => {
     const [screening, setScreening] = useState(false);
     const [batchCompleted, setBatchCompleted] = useState(0);
     const [batchTotal, setBatchTotal] = useState(0);
+    const [usage, setUsage] = useState({ used: 0, limit: 15 });
     const [promoting, setPromoting] = useState(false);
     const [promoted, setPromoted] = useState(false);
     const [showReset, setShowReset] = useState(false);
@@ -808,6 +808,22 @@ const ResumeScreening = () => {
     useEffect(() => { if (results.length) sessionStorage.setItem('rs_results', JSON.stringify(results)); else sessionStorage.removeItem('rs_results'); }, [results]);
     useEffect(() => () => { if (pollRef.current) clearInterval(pollRef.current); }, []);
 
+    // ── Fetch usage stats ──────────────────────────────────────────────────────
+    const fetchUsageStats = async () => {
+        try {
+            const token = localStorage.getItem('token');
+            const res = await fetch(`${API_URL}/api/resume/usage-stats/`, {
+                headers: token ? { Authorization: `Bearer ${token}` } : {}
+            });
+            if (res.ok) {
+                const data = await res.json();
+                setUsage(data);
+            }
+        } catch (e) {
+            console.error('Error fetching usage stats:', e);
+        }
+    };
+
     // ── Fetch batches ─────────────────────────────────────────────────────────
     const fetchBatches = async () => {
         setLoadingBatches(true);
@@ -834,7 +850,7 @@ const ResumeScreening = () => {
         } catch { /* ignore */ }
     };
 
-    useEffect(() => { checkOneDriveAuth(); }, []);
+    useEffect(() => { checkOneDriveAuth(); fetchUsageStats(); }, []);
 
     const handleOneDriveConnect = () => {
         const email = _odEmail();
@@ -932,7 +948,7 @@ const ResumeScreening = () => {
         if (!confirm('Delete this batch permanently?')) return;
         const token = localStorage.getItem('token');
         const r = await fetch(`${API_URL}/api/resume/batches/${batchId}/`, { method: 'DELETE', headers: token ? { Authorization: `Bearer ${token}` } : {} });
-        if (r.ok) { if (activeBatch === batchId) resetAll(); fetchBatches(); }
+        if (r.ok) { if (activeBatch === batchId) resetAll(); fetchBatches(); fetchUsageStats(); }
     };
 
     // ── Map poll results ──────────────────────────────────────────────────────
@@ -974,6 +990,7 @@ const ResumeScreening = () => {
                     setResults(mapResults(pd, false));
                     setScreening(false);
                     localStorage.removeItem('active_screening_batch_id');
+                    fetchUsageStats();
                 }
             } catch (e) {
                 console.error(e);
@@ -1060,8 +1077,10 @@ const ResumeScreening = () => {
             setBatchTotal(data.job_count || 0);
             localStorage.setItem('active_screening_batch_id', batch_id);
             resumeScreeningPoll(batch_id);
+            fetchUsageStats();
         } catch (e) {
             console.error(e);
+            alert(e.message || "Failed to start screening.");
             setScreening(false);
         }
     };
@@ -1100,7 +1119,7 @@ const ResumeScreening = () => {
         <div className="w-full min-h-screen pb-12">
 
             {/* ── Page Header ── */}
-            <div className="mb-8 flex flex-col md:flex-row md:items-center md:justify-between gap-4 bg-white border border-slate-200 rounded-3xl p-6 shadow-sm">
+            <div className="mb-8 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 bg-white border border-slate-200 rounded-3xl p-6 shadow-sm">
                 <div className="flex items-start gap-4">
                     <div className="w-12 h-12 bg-emerald-500/10 rounded-2xl flex items-center justify-center text-emerald-600 shrink-0">
                         <Layers size={24} />
@@ -1110,17 +1129,45 @@ const ResumeScreening = () => {
                         <p className="text-sm font-semibold text-slate-400 mt-2">Filter requirements, batch process resumes, and let Gemini evaluate applicant quality.</p>
                     </div>
                 </div>
-                <div className="flex items-center gap-3 shrink-0 self-end md:self-center">
-                    {screened.length > 0 && (
-                        <button onClick={promoteAll} disabled={promoting || promoted}
-                            className={`px-5 py-2.5 text-xs font-bold text-white rounded-xl transition-all shadow-md ${promoted ? 'bg-emerald-600' : 'bg-emerald-600 hover:bg-emerald-700'}`}>
-                            {promoting ? <Loader2 size={13} className="animate-spin inline mr-1" /> : promoted ? '✓ Shortlist Promoted' : 'Promote Shortlist'}
+                
+                <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-4 shrink-0 w-full lg:w-auto">
+                    {/* Processing Limit Progress Widget */}
+                    <div className="flex flex-col gap-1.5 px-4 py-2.5 border border-slate-200 rounded-2xl bg-slate-50/50 min-w-[150px] sm:min-w-[180px]">
+                        <div className="flex items-center justify-between text-[10px] font-bold">
+                            <span className="text-slate-500 uppercase tracking-wider">Usage</span>
+                            <span className={usage.used >= usage.limit ? "text-rose-600 font-black" : "text-amber-600 font-black"}>
+                                {usage.used} / {usage.limit}
+                            </span>
+                        </div>
+                        <div className="h-1.5 w-full bg-slate-100 rounded-full overflow-hidden">
+                            <div 
+                                className={`h-full rounded-full transition-all duration-500 ${
+                                    usage.used >= usage.limit ? 'bg-rose-500' : 'bg-amber-500'
+                                }`} 
+                                style={{ width: `${Math.min(100, (usage.used / usage.limit) * 100)}%` }} 
+                            />
+                        </div>
+                        <div className="text-[9px] font-semibold text-slate-400 leading-none">
+                            {usage.used >= usage.limit ? (
+                                <span>Limit reached. <a href="https://thirdeyedata.ai/contact-us/" target="_blank" rel="noopener noreferrer" className="underline font-bold text-rose-500 hover:text-rose-600">Contact ThirdEye</a></span>
+                            ) : (
+                                <span>Need more? <a href="https://thirdeyedata.ai/contact-us/" target="_blank" rel="noopener noreferrer" className="underline font-bold text-amber-500 hover:text-amber-600">Contact ThirdEye</a></span>
+                            )}
+                        </div>
+                    </div>
+
+                    <div className="flex items-center gap-3 shrink-0 self-end lg:self-center">
+                        {screened.length > 0 && (
+                            <button onClick={promoteAll} disabled={promoting || promoted}
+                                className={`px-5 py-2.5 text-xs font-bold text-white rounded-xl transition-all shadow-md ${promoted ? 'bg-emerald-600' : 'bg-emerald-600 hover:bg-emerald-700'}`}>
+                                {promoting ? <Loader2 size={13} className="animate-spin inline mr-1" /> : promoted ? '✓ Shortlist Promoted' : 'Promote Shortlist'}
+                            </button>
+                        )}
+                        <button onClick={() => setShowReset(true)}
+                            className="px-5 py-2.5 text-xs font-bold text-rose-600 border border-rose-200 rounded-xl hover:bg-rose-50 transition-all">
+                            Reset Workspace
                         </button>
-                    )}
-                    <button onClick={() => setShowReset(true)}
-                        className="px-5 py-2.5 text-xs font-bold text-rose-600 border border-rose-200 rounded-xl hover:bg-rose-50 transition-all">
-                        Reset Workspace
-                    </button>
+                    </div>
                 </div>
             </div>
 
@@ -1496,7 +1543,7 @@ const ResumeScreening = () => {
                                                             </td>
                                                             <td className="px-5 py-4">
                                                                 <span className="font-extrabold text-slate-800 block text-sm">{c.name}</span>
-                                                                <span className="text-slate-400 font-semibold">{c.candidate?.email || '—'}</span>
+                                                                <span className="text-slate-400 font-semibold">{(c.candidate?.email && !c.candidate.email.startsWith('no-email-')) ? c.candidate.email : '—'}</span>
                                                             </td>
                                                             <td className="px-5 py-4 text-slate-600 font-bold uppercase">
                                                                 {c.analysis?.experience || 'None'}

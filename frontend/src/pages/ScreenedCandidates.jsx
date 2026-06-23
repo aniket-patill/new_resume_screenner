@@ -70,8 +70,8 @@ const AVAILABLE_COLUMNS = [
     { key: 'email', label: 'Email' },
     { key: 'score', label: 'Score' },
     { key: 'role', label: 'Role' },
-    { key: 'status', label: 'Status' },
-    { key: 'created_at', label: 'Screened Date' },
+    { key: 'location', label: 'Location' },
+    { key: 'education_details', label: 'Education' },
     { key: 'experience', label: 'Total Experience' },
     { key: 'keyword_match_pct', label: 'Keyword Match %' },
     { key: 'key_skills_match', label: 'Matched Keywords' },
@@ -80,11 +80,10 @@ const AVAILABLE_COLUMNS = [
     { key: 'custom_prompt_matches', label: 'Custom Req. Matches' },
     { key: 'missing_skills', label: 'Missing Skills / Gaps' },
     { key: 'reasoning', label: 'AI Evaluation Reasoning' },
-    { key: 'stage', label: 'Candidate Stage' },
 ];
 
 const exportToPDF = (candidates, selectedColumns) => {
-    const compactKeys = ['name', 'phone', 'email', 'score', 'role', 'status', 'created_at', 'experience', 'keyword_match_pct', 'stage'];
+    const compactKeys = ['name', 'phone', 'email', 'score', 'role', 'location', 'education_details', 'experience', 'keyword_match_pct'];
     const compactCols = selectedColumns.filter(col => compactKeys.includes(col.key));
     const detailKeys = ['key_skills_match', 'missing_skills', 'candidate_summary', 'certification_match', 'custom_prompt_matches', 'reasoning'];
     const hasDetails = selectedColumns.some(col => detailKeys.includes(col.key));
@@ -107,14 +106,13 @@ const exportToPDF = (candidates, selectedColumns) => {
                 const a = c.analysis_data || {};
                 if (col.key === 'name') return c.name || '—';
                 if (col.key === 'phone') return cleanPhone(c.phone) || '—';
-                if (col.key === 'email') return c.email || '—';
+                if (col.key === 'email') return (c.email && !c.email.startsWith('no-email-')) ? c.email : '—';
                 if (col.key === 'score') return c.score != null ? `${Math.round(c.score)}%` : '—';
                 if (col.key === 'role') return c.role || '—';
-                if (col.key === 'status') return c.status || '—';
-                if (col.key === 'created_at') return formatDate(c.created_at);
+                if (col.key === 'location') return a.location || '—';
+                if (col.key === 'education_details') return a.education_details || '—';
                 if (col.key === 'experience') return a.experience || '—';
                 if (col.key === 'keyword_match_pct') return a.keyword_match_pct != null ? `${Number(a.keyword_match_pct).toFixed(0)}%` : '—';
-                if (col.key === 'stage') return c.stage || '—';
                 return '—';
             })
         ]);
@@ -141,7 +139,8 @@ const exportToPDF = (candidates, selectedColumns) => {
             doc.setFontSize(9);
             doc.setTextColor(100, 100, 100);
             doc.text(`Rank: #${idx + 1}  |  Score: ${c.score != null ? Math.round(c.score) : 0}%  |  Role: ${c.role || '—'}`, 14, 24);
-            doc.text(`Email: ${c.email || '—'}  |  Phone: ${cleanPhone(c.phone) || '—'}`, 14, 29);
+            const displayEmail = (c.email && !c.email.startsWith('no-email-')) ? c.email : '—';
+            doc.text(`Email: ${displayEmail}  |  Phone: ${cleanPhone(c.phone) || '—'}`, 14, 29);
             
             const detailRows = [];
             
@@ -193,11 +192,11 @@ const exportToExcel = (candidates, selectedColumns) => {
         selectedColumns.forEach(col => {
             if (col.key === 'name') row[col.label] = c.name || '—';
             else if (col.key === 'phone') row[col.label] = cleanPhone(c.phone) || '—';
-            else if (col.key === 'email') row[col.label] = c.email || '—';
+            else if (col.key === 'email') row[col.label] = (c.email && !c.email.startsWith('no-email-')) ? c.email : '—';
             else if (col.key === 'score') row[col.label] = c.score != null ? `${c.score.toFixed(2)}%` : '—';
             else if (col.key === 'role') row[col.label] = c.role || '—';
-            else if (col.key === 'status') row[col.label] = c.status || '—';
-            else if (col.key === 'created_at') row[col.label] = formatDate(c.created_at);
+            else if (col.key === 'location') row[col.label] = c.analysis_data?.location || '—';
+            else if (col.key === 'education_details') row[col.label] = c.analysis_data?.education_details || '—';
             else if (col.key === 'experience') row[col.label] = c.analysis_data?.experience || '—';
             else if (col.key === 'keyword_match_pct') row[col.label] = c.analysis_data?.keyword_match_pct != null ? `${Number(c.analysis_data.keyword_match_pct).toFixed(2)}%` : '—';
             else if (col.key === 'key_skills_match') row[col.label] = Array.isArray(c.analysis_data?.key_skills_match) ? c.analysis_data.key_skills_match.join(', ') : '—';
@@ -206,7 +205,6 @@ const exportToExcel = (candidates, selectedColumns) => {
             else if (col.key === 'custom_prompt_matches') row[col.label] = Array.isArray(c.analysis_data?.custom_prompt_matches) ? c.analysis_data.custom_prompt_matches.join(', ') : '—';
             else if (col.key === 'missing_skills') row[col.label] = Array.isArray(c.analysis_data?.missing_skills) ? c.analysis_data.missing_skills.join(', ') : '—';
             else if (col.key === 'reasoning') row[col.label] = stripMarkdown(c.analysis_data?.reasoning || '—');
-            else if (col.key === 'stage') row[col.label] = c.stage || '—';
             else row[col.label] = '—';
         });
         return row;
@@ -614,7 +612,7 @@ const BatchDetailView = ({ batchId, batchMeta, onBack, onDeleteBatch }) => {
                                                                                                                 )}
                                                                                                             </div>
                                                                                                             <div className="text-[10px] text-slate-400 font-semibold truncate mt-0.5">
-                                                                                                                {c.email || '—'}
+                                                                                                                {(c.email && !c.email.startsWith('no-email-')) ? c.email : '—'}
                                                                                                             </div>
                                                                                                         </div>
                                                                                                     </div>
@@ -704,7 +702,7 @@ const BatchDetailView = ({ batchId, batchMeta, onBack, onDeleteBatch }) => {
                                                                             {cleanPhone(c.phone) || <span className="text-slate-300 italic font-sans font-normal">Not provided</span>}
                                                                         </td>
                                                                         <td className="px-5 py-4">
-                                                                            {c.email ? (
+                                                                            {c.email && !c.email.startsWith('no-email-') ? (
                                                                                 <a href={`mailto:${c.email}`} className="text-emerald-600 hover:underline font-bold">{c.email}</a>
                                                                             ) : '—'}
                                                                         </td>

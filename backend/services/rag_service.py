@@ -232,6 +232,8 @@ You are an advanced Automated Applicant Tracking System (ATS) and Senior Technic
 5. **Certification Match**: If "Additional Requirements / Certifications" are specified in the Job Description, evaluate if the candidate has met these certifications/requirements. Extract a list of matched certifications/requirements. If none are matched or specified, return an empty list.
 6. **Custom Requirements Match**: If "[CUSTOM REQUIREMENTS]:" is specified in the Job Description, carefully read each requirement listed there. For EACH requirement that the candidate DOES meet based on their resume, generate a SHORT descriptive keyword tag (2-5 words max, e.g. "AWS Certified", "Bilingual English/Spanish", "6+ Years Leadership"). Return these as a list of matched keyword strings. If none match or none are specified, return an empty list.
 7. **Candidate Summary**: Generate a short, professional, and concise summary of the candidate's profile and matching status (2-3 lines maximum, suitable for reports).
+8. **Location Extraction**: Extract candidate's location (city, state/country or null).
+9. **Education Details Extraction**: Extract candidate's highest degree, major, university, and year of graduation as a formatted string (e.g. "B.Tech in CS, Stanford (2022)" or null).
 
 ### Output Format:
 Return a valid JSON object matching this schema. Do not output any preamble, markdown code blocks, or postamble.
@@ -253,7 +255,9 @@ Return a valid JSON object matching this schema. Do not output any preamble, mar
     "experience": "Candidate's total experience, e.g. 5 Years or 8+ Years",
     "certification_match": ["AWS Certified", "PMP Certified"],
     "custom_prompt_matches": ["AWS Certified", "Bilingual English/Spanish"],
-    "candidate_summary": "Short 2-3 line summary suitable for reports"
+    "candidate_summary": "Short 2-3 line summary suitable for reports",
+    "location": "City, State/Country or null",
+    "education_details": "Degree, University (Year) or null"
 }}
 """
         return gemini_client.call_gemini(
@@ -363,6 +367,8 @@ You are an advanced Automated Applicant Tracking System (ATS) and Senior Technic
 5. **Experience Extraction**: Extract the candidate's total years of experience as a short string (e.g. "2 Years", "5 Years", "8+ Years", "None").
 6. **Certification Match**: If "Additional Requirements / Certifications" are specified in the Job Description, evaluate if the candidate has met these certifications/requirements. Extract a list of matched certifications/requirements. If none are matched or specified, return an empty list.
 7. **Candidate Summary**: Generate a short, professional, and concise summary of the candidate's profile and matching status (2-3 lines maximum, suitable for reports).
+8. **Location Extraction**: Extract candidate's location (city, state/country or null).
+9. **Education Details Extraction**: Extract candidate's highest degree, major, university, and year of graduation as a formatted string (e.g. "B.Tech in CS, Stanford (2022)" or null).
 
 ### Output Format:
 Return a valid JSON object matching this schema. Do not output any preamble, markdown code blocks, or postamble.
@@ -385,7 +391,9 @@ Return a valid JSON object matching this schema. Do not output any preamble, mar
     "full_text": "Complete transcribed text of the resume here.",
     "experience": "Candidate's total experience, e.g. 5 Years or 8+ Years",
     "certification_match": ["AWS Certified", "PMP Certified"],
-    "candidate_summary": "Short 2-3 line summary suitable for reports"
+    "candidate_summary": "Short 2-3 line summary suitable for reports",
+    "location": "City, State/Country or null",
+    "education_details": "Degree, University (Year) or null"
 }}
 """
         model = genai.GenerativeModel(

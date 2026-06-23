@@ -208,13 +208,13 @@ async def screen_resume(
     if custom_prompt and custom_prompt.strip():
         final_jd += f"\n\n[CUSTOM REQUIREMENTS]: {custom_prompt}"
 
-    candidate_count = db.query(models.Candidate).count()
-    MAX_CANDIDATES = 50
+    candidate_count = db.query(models.Candidate).filter(models.Candidate.created_by == current_user.id).count()
+    MAX_CANDIDATES = 15
     if candidate_count >= MAX_CANDIDATES:
-        return {"message": f"Candidate limit ({MAX_CANDIDATES}) reached.", "status": "limit_exceeded"}
+        raise HTTPException(status_code=400, detail="Candidate limit (15) reached. If you want to process more resumes, please contact thirdeye.")
     if candidate_count + len(files) > MAX_CANDIDATES:
         allowed = MAX_CANDIDATES - candidate_count
-        return {"message": f"Upload exceeds limit. Allow {allowed} more.", "status": "limit_exceeded"}
+        raise HTTPException(status_code=400, detail=f"Upload exceeds limit. You can only process {allowed} more candidate(s). If you want to process more resumes, please contact thirdeye.")
 
     UPLOAD_DIR = "media/resumes"
     os.makedirs(UPLOAD_DIR, exist_ok=True)
@@ -307,10 +307,10 @@ async def screen_resume_onedrive(
     if not pdf_files:
         raise HTTPException(status_code=400, detail="No PDF or DOCX files found in the selected folder.")
 
-    candidate_count = db.query(models.Candidate).count()
-    MAX_CANDIDATES = 50
+    candidate_count = db.query(models.Candidate).filter(models.Candidate.created_by == current_user.id).count()
+    MAX_CANDIDATES = 15
     if candidate_count >= MAX_CANDIDATES:
-        return {"message": f"Candidate limit ({MAX_CANDIDATES}) reached.", "status": "limit_exceeded"}
+        raise HTTPException(status_code=400, detail="Candidate limit (15) reached. If you want to process more resumes, please contact thirdeye.")
     allowed = MAX_CANDIDATES - candidate_count
     pdf_files = pdf_files[:allowed]
 
@@ -682,6 +682,14 @@ def bulk_update_candidates(
         "message": msg,
         "count": updated_count
     }
+
+@router.get("/usage-stats/", response_model=Dict[str, int])
+def get_usage_stats(
+    db: Session = Depends(database.get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    candidate_count = db.query(models.Candidate).filter(models.Candidate.created_by == current_user.id).count()
+    return {"used": candidate_count, "limit": 15}
 
 @router.get("/stats/", response_model=schemas.StatsResponse)
 def get_stats(
