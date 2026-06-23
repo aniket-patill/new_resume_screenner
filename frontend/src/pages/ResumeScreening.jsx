@@ -785,6 +785,15 @@ const ResumeScreening = () => {
     const [candidateSearch, setCandidateSearch] = useState('');
     const [showPremiumModal, setShowPremiumModal] = useState(false);
 
+    // ── OneDrive state ────────────────────────────────────────────────────────
+    const [oneDriveConnected, setOneDriveConnected] = useState(false);
+    const [showOneDriveModal, setShowOneDriveModal] = useState(false);
+    const [oneDriveFolders, setOneDriveFolders] = useState([]);
+    const [oneDriveFoldersLoading, setOneDriveFoldersLoading] = useState(false);
+    const [oneDriveFiles, setOneDriveFiles] = useState([]);
+    const [oneDriveFilesLoading, setOneDriveFilesLoading] = useState(false);
+    const [selectedOneDriveFolder, setSelectedOneDriveFolder] = useState(null);
+
     const jdFileRef = useRef(null);
     const pollRef = useRef(null);
 
@@ -811,6 +820,76 @@ const ResumeScreening = () => {
     };
 
     useEffect(() => { if (tab === 'history') fetchBatches(); }, [tab]);
+
+    // ── OneDrive helpers ──────────────────────────────────────────────────────
+    const _odEmail = () => localStorage.getItem('email') || '';
+
+    const checkOneDriveAuth = async () => {
+        const email = _odEmail();
+        if (!email) return;
+        try {
+            const r = await fetch(`${API_URL}/check_onedrive_authenticated?email=${encodeURIComponent(email)}`);
+            const d = await r.json();
+            setOneDriveConnected(d.connected === true);
+        } catch { /* ignore */ }
+    };
+
+    useEffect(() => { checkOneDriveAuth(); }, []);
+
+    const handleOneDriveConnect = () => {
+        const email = _odEmail();
+        const popup = window.open(
+            `${API_URL}/onedrive/connect?email=${encodeURIComponent(email)}`,
+            'OneDriveAuth',
+            'width=860,height=640,left=200,top=100'
+        );
+        const listener = (e) => {
+            if (e.data === 'onedrive_auth_success') {
+                window.removeEventListener('message', listener);
+                popup?.close();
+                setOneDriveConnected(true);
+                loadOneDriveFolders();
+                setShowOneDriveModal(true);
+            } else if (e.data === 'onedrive_auth_failed') {
+                window.removeEventListener('message', listener);
+                popup?.close();
+            }
+        };
+        window.addEventListener('message', listener);
+    };
+
+    const loadOneDriveFolders = async () => {
+        const email = _odEmail();
+        if (!email) return;
+        setOneDriveFoldersLoading(true);
+        try {
+            const r = await fetch(`${API_URL}/folders?email=${encodeURIComponent(email)}`);
+            const d = await r.json();
+            setOneDriveFolders(d.folders || []);
+        } catch { setOneDriveFolders([]); }
+        setOneDriveFoldersLoading(false);
+    };
+
+    const handleFolderSelect = async (folder) => {
+        setSelectedOneDriveFolder(folder);
+        setOneDriveFiles([]);
+        setOneDriveFilesLoading(true);
+        try {
+            const email = _odEmail();
+            const r = await fetch(`${API_URL}/onedrive-folder-files?email=${encodeURIComponent(email)}&folder_id=${folder.id}`);
+            const d = await r.json();
+            setOneDriveFiles(d.files || []);
+        } catch { setOneDriveFiles([]); }
+        setOneDriveFilesLoading(false);
+    };
+
+    const handleOneDriveClick = () => {
+        setShowFolderMenu(false);
+        setShowOneDriveModal(true);
+        if (oneDriveConnected && oneDriveFolders.length === 0) {
+            loadOneDriveFolders();
+        }
+    };
 
     // ── Load past batch ────────────────────────────────────────────────────────
     const loadBatch = async (batchId) => {
@@ -950,7 +1029,9 @@ const ResumeScreening = () => {
     const startScreening = async () => {
         if (!isValid || screening) return;
         if (pollRef.current) clearInterval(pollRef.current);
-        setScreening(true); setResults([]); setBatchCompleted(0); setBatchTotal(files.length); setPromoted(false); setActiveBatch(null);
+        setScreening(true); setResults([]); setBatchCompleted(0);
+        setBatchTotal(selectedOneDriveFolder ? 0 : files.length);
+        setPromoted(false); setActiveBatch(null);
 
         const form = new FormData();
         form.append('job_description', jd);
@@ -958,15 +1039,25 @@ const ResumeScreening = () => {
         if (batchLabel.trim()) form.append('batch_name', batchLabel.trim());
         if (keywords.length) form.append('keywords', keywords.join(', '));
         if (customPrompt.trim()) form.append('custom_prompt', customPrompt.trim());
-        files.forEach(f => form.append('files', f));
+
+        let endpoint = `${API_URL}/api/resume/screen/`;
+        if (selectedOneDriveFolder) {
+            endpoint = `${API_URL}/api/resume/screen-onedrive/`;
+            form.append('email', _odEmail());
+            form.append('folder_id', selectedOneDriveFolder.id);
+        } else {
+            files.forEach(f => form.append('files', f));
+        }
 
         try {
             const token = localStorage.getItem('token');
-            const res = await fetch(`${API_URL}/api/resume/screen/`, {
+            const res = await fetch(endpoint, {
                 method: 'POST', headers: token ? { Authorization: `Bearer ${token}` } : {}, body: form
             });
             if (!res.ok) { const err = await res.json().catch(() => ({})); throw new Error(err.detail || `HTTP ${res.status}`); }
-            const { batch_id } = await res.json();
+            const data = await res.json();
+            const batch_id = data.batch_id;
+            setBatchTotal(data.job_count || 0);
             localStorage.setItem('active_screening_batch_id', batch_id);
             resumeScreeningPoll(batch_id);
         } catch (e) {
@@ -997,7 +1088,8 @@ const ResumeScreening = () => {
     const pending = results.filter(r => r.isPending);
     const topScore = screened.length ? Math.max(...screened.map(r => r.score)) : 0;
     const avgScore = screened.length ? Math.round(screened.reduce((s, r) => s + r.score, 0) / screened.length) : 0;
-    const isValid = files.length > 0 && jd.trim() && shortlist > 0 && shortlist <= (files.length || 999);
+    const hasSource = files.length > 0 || selectedOneDriveFolder != null;
+    const isValid = hasSource && jd.trim() && shortlist > 0;
 
     const filteredScreened = screened.filter(c =>
         (c.name || '').toLowerCase().includes(candidateSearch.toLowerCase()) ||
@@ -1177,8 +1269,10 @@ const ResumeScreening = () => {
                                                 className="w-full flex items-center gap-2 px-3 py-2.5 text-xs font-bold text-slate-700 hover:bg-slate-50 border-b border-slate-100">
                                                 <HardDrive size={13} className="text-emerald-600" /> Local Directory
                                             </button>
-                                            <button className="w-full flex items-center gap-2 px-3 py-2.5 text-xs font-bold text-slate-300 cursor-not-allowed">
-                                                <Cloud size={13} className="text-blue-400" /> OneDrive (soon)
+                                            <button onClick={handleOneDriveClick}
+                                                className="w-full flex items-center gap-2 px-3 py-2.5 text-xs font-bold text-slate-700 hover:bg-slate-50">
+                                                <Cloud size={13} className="text-blue-400" />
+                                                {oneDriveConnected ? 'OneDrive' : 'OneDrive (connect)'}
                                             </button>
                                         </div>
                                     </>
@@ -1186,6 +1280,20 @@ const ResumeScreening = () => {
                             </div>
                         </div>
                         <div className="p-5 space-y-4">
+                            {/* Selected OneDrive folder badge */}
+                            {selectedOneDriveFolder ? (
+                                <div className="flex items-center gap-2 px-3 py-2.5 bg-blue-50 border border-blue-200 rounded-xl text-xs">
+                                    <Cloud size={13} className="text-blue-500 shrink-0" />
+                                    <div className="flex-1 min-w-0">
+                                        <p className="font-bold text-blue-700 truncate">{selectedOneDriveFolder.name}</p>
+                                        <p className="text-blue-400 text-[10px]">
+                                            {oneDriveFiles.length > 0 ? `${oneDriveFiles.length} file(s) will be screened` : 'All PDFs/DOCX in this folder will be screened'}
+                                        </p>
+                                    </div>
+                                    <button onClick={() => setShowOneDriveModal(true)} className="text-blue-400 hover:text-blue-600 shrink-0 text-[10px] font-bold">Change</button>
+                                    <button onClick={() => { setSelectedOneDriveFolder(null); setOneDriveFiles([]); }} className="text-blue-300 hover:text-rose-500 shrink-0"><X size={12} /></button>
+                                </div>
+                            ) : (
                             <div {...getRootProps()}
                                 className={`border-2 border-dashed rounded-2xl p-6 flex flex-col items-center text-center cursor-pointer transition-all ${isDragActive ? 'border-emerald-500 bg-green-50/20 scale-[1.01]' : 'border-slate-200 hover:border-emerald-500/30 hover:bg-slate-50/50'}`}>
                                 <input {...getInputProps()} />
@@ -1195,6 +1303,7 @@ const ResumeScreening = () => {
                                 <p className="text-xs font-bold text-slate-700">Drop PDF / DOCX resumes</p>
                                 <p className="text-[10px] text-slate-400 mt-1">or click to browse local files</p>
                             </div>
+                            )}
 
                             {files.length > 0 && (
                                 <div className="space-y-2">
@@ -1650,6 +1759,119 @@ const ResumeScreening = () => {
                     </div>
                 </div>
             )}
+
+            {/* OneDrive Modal */}
+            <AnimatePresence>
+            {showOneDriveModal && (
+                <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+                    className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm"
+                    onClick={e => { if (e.target === e.currentTarget) setShowOneDriveModal(false); }}>
+                    <motion.div initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.95, opacity: 0 }}
+                        className="bg-white rounded-2xl w-full max-w-sm shadow-2xl border border-slate-200 overflow-hidden">
+
+                        {/* Header */}
+                        <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                                <Cloud size={16} className="text-blue-500" />
+                                <h3 className="text-sm font-bold text-slate-800">OneDrive</h3>
+                            </div>
+                            <button onClick={() => setShowOneDriveModal(false)} className="text-slate-300 hover:text-slate-500 p-1 rounded-lg hover:bg-slate-50"><X size={15} /></button>
+                        </div>
+
+                        {/* Status row */}
+                        <div className="px-5 pt-4 pb-2 flex items-center gap-2">
+                            <div className={`w-2 h-2 rounded-full shrink-0 ${oneDriveConnected ? 'bg-emerald-500' : 'bg-slate-300'}`} />
+                            <span className="text-xs font-semibold text-slate-600 flex-1">
+                                {oneDriveConnected ? 'Connected to OneDrive' : 'Not connected'}
+                            </span>
+                            {oneDriveConnected && (
+                                <button onClick={handleOneDriveConnect}
+                                    className="text-[10px] font-bold text-blue-500 hover:text-blue-700 hover:underline">
+                                    Reconnect
+                                </button>
+                            )}
+                        </div>
+
+                        {/* Connect button (not connected) */}
+                        {!oneDriveConnected && (
+                            <div className="px-5 pb-5 pt-2">
+                                <button onClick={handleOneDriveConnect}
+                                    className="w-full py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl transition-colors flex items-center justify-center gap-2">
+                                    <Cloud size={13} /> Connect OneDrive Account
+                                </button>
+                                <p className="text-[10px] text-slate-400 text-center mt-2">A popup will open to sign in with Microsoft</p>
+                            </div>
+                        )}
+
+                        {/* Folder picker (connected) */}
+                        {oneDriveConnected && (
+                            <div className="px-5 pb-5 pt-1 space-y-3">
+                                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Select a Folder</p>
+                                <div className="border border-slate-200 rounded-xl overflow-hidden max-h-56 overflow-y-auto">
+                                    {oneDriveFoldersLoading ? (
+                                        <div className="flex items-center justify-center py-8 gap-2 text-xs text-slate-400">
+                                            <Loader2 size={13} className="animate-spin" /> Loading folders…
+                                        </div>
+                                    ) : oneDriveFolders.length === 0 ? (
+                                        <p className="text-xs text-slate-400 text-center py-8">No folders found.</p>
+                                    ) : (
+                                        oneDriveFolders.map(f => (
+                                            <button key={f.id} onClick={() => handleFolderSelect(f)}
+                                                className={`w-full flex items-center gap-2 px-3 py-2.5 text-xs text-left border-b border-slate-50 last:border-0 transition-colors hover:bg-blue-50 ${selectedOneDriveFolder?.id === f.id ? 'bg-blue-50 font-bold text-blue-700' : 'text-slate-700'}`}>
+                                                <FolderOpen size={12} className={`shrink-0 ${selectedOneDriveFolder?.id === f.id ? 'text-blue-500' : 'text-slate-400'}`} />
+                                                <span className="truncate">{f.name}</span>
+                                                {selectedOneDriveFolder?.id === f.id && <CheckCircle size={11} className="ml-auto text-blue-500 shrink-0" />}
+                                            </button>
+                                        ))
+                                    )}
+                                </div>
+
+                                {/* File preview */}
+                                {selectedOneDriveFolder && (
+                                    <div>
+                                        {oneDriveFilesLoading ? (
+                                            <div className="flex items-center gap-2 text-xs text-slate-400 py-1">
+                                                <Loader2 size={12} className="animate-spin" /> Scanning files…
+                                            </div>
+                                        ) : oneDriveFiles.length > 0 ? (
+                                            <div className="space-y-1">
+                                                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                                                    {oneDriveFiles.length} resume file{oneDriveFiles.length !== 1 ? 's' : ''} found
+                                                </p>
+                                                <div className="max-h-32 overflow-y-auto space-y-1">
+                                                    {oneDriveFiles.map((f, i) => (
+                                                        <div key={i} className="flex items-center gap-2 px-2.5 py-1.5 bg-slate-50 rounded-lg text-[11px] text-slate-600 border border-slate-100">
+                                                            <FileText size={11} className="text-slate-400 shrink-0" />
+                                                            <span className="truncate">{f.name}</span>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        ) : (
+                                            <p className="text-[11px] text-slate-400 py-1">No PDF or DOCX files found in this folder.</p>
+                                        )}
+                                    </div>
+                                )}
+
+                                {/* Footer */}
+                                <div className="flex gap-2 pt-1">
+                                    <button onClick={() => setShowOneDriveModal(false)}
+                                        className="flex-1 py-2 text-xs font-bold text-slate-500 hover:text-slate-700 border border-slate-200 rounded-xl hover:bg-slate-50 transition-colors">
+                                        Cancel
+                                    </button>
+                                    <button
+                                        onClick={() => { setFiles([]); setShowOneDriveModal(false); }}
+                                        disabled={!selectedOneDriveFolder || oneDriveFiles.length === 0}
+                                        className="flex-1 py-2 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-xl disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+                                        Load {oneDriveFiles.length > 0 ? `${oneDriveFiles.length} Files` : 'Files'}
+                                    </button>
+                                </div>
+                            </div>
+                        )}
+                    </motion.div>
+                </motion.div>
+            )}
+            </AnimatePresence>
 
             {/* Export Config Modal */}
             <ExportConfigModal

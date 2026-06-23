@@ -268,6 +268,110 @@ async def screen_resume(
     }
 
 
+@router.post("/screen-onedrive/")
+async def screen_resume_onedrive(
+    email: str = Form(...),
+    folder_id: str = Form(...),
+    job_description: Optional[str] = Form(None),
+    keywords: Optional[str] = Form(None),
+    certifications: Optional[str] = Form(None),
+    custom_prompt: Optional[str] = Form(None),
+    batch_name: Optional[str] = Form(None),
+    top_n: Optional[int] = Form(10),
+    db: Session = Depends(database.get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    import uuid as _uuid
+    import redis_queue
+    from services.onedrive_graph_service import OneDriveGraphService
+    from services.token_service import TokenRefreshError, refresh_access_token
+
+    if not job_description or not job_description.strip():
+        raise HTTPException(status_code=400, detail="Job Description is required.")
+
+    od_user = db.query(models.OneDriveUser).filter(models.OneDriveUser.user_email == email).first()
+    if not od_user:
+        raise HTTPException(status_code=404, detail="OneDrive account not connected for this user.")
+
+    try:
+        access_token = refresh_access_token(od_user, db)
+    except TokenRefreshError as exc:
+        raise HTTPException(status_code=401, detail=str(exc))
+
+    all_items = OneDriveGraphService.list_files_in_folder(access_token, folder_id)
+    pdf_files = [
+        item for item in all_items
+        if "file" in item and item.get("name", "").lower().endswith((".pdf", ".docx", ".doc"))
+    ]
+
+    if not pdf_files:
+        raise HTTPException(status_code=400, detail="No PDF or DOCX files found in the selected folder.")
+
+    candidate_count = db.query(models.Candidate).count()
+    MAX_CANDIDATES = 50
+    if candidate_count >= MAX_CANDIDATES:
+        return {"message": f"Candidate limit ({MAX_CANDIDATES}) reached.", "status": "limit_exceeded"}
+    allowed = MAX_CANDIDATES - candidate_count
+    pdf_files = pdf_files[:allowed]
+
+    final_jd = job_description
+    if keywords and keywords.strip():
+        final_jd += f"\n\nRequired Keywords: {keywords}"
+    if certifications and certifications.strip():
+        final_jd += f"\n\nAdditional Requirements / Certifications: {certifications}"
+    if custom_prompt and custom_prompt.strip():
+        final_jd += f"\n\n[CUSTOM REQUIREMENTS]: {custom_prompt}"
+
+    UPLOAD_DIR = "media/resumes"
+    os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+    batch_id = str(_uuid.uuid4())
+    created_job_ids = []
+
+    for item in pdf_files:
+        safe_filename = os.path.basename(item["name"])
+        file_location = f"{UPLOAD_DIR}/{safe_filename}"
+        try:
+            content = OneDriveGraphService.download_file(access_token, item["id"])
+            with open(file_location, "wb") as f:
+                f.write(content)
+        except Exception as exc:
+            print(f"[OneDrive] Failed to download {safe_filename}: {exc}")
+            continue
+
+        job = models.ScreeningJob(
+            batch_id=batch_id,
+            filename=safe_filename,
+            file_path=file_location,
+            jd_text=final_jd,
+            top_n=top_n,
+            status="pending",
+            batch_name=batch_name or None,
+            created_by=current_user.id
+        )
+        db.add(job)
+        db.commit()
+        db.refresh(job)
+        created_job_ids.append(job.id)
+
+    if not created_job_ids:
+        raise HTTPException(status_code=400, detail="Could not download any files from OneDrive.")
+
+    client = await redis_queue.get_redis()
+    await redis_queue.ensure_group(client)
+    for job_id in created_job_ids:
+        await redis_queue.enqueue_job(client, job_id)
+    await client.aclose()
+
+    print(f"[OneDrive] Batch {batch_id}: {len(created_job_ids)} jobs queued from folder {folder_id}")
+    return {
+        "batch_id": batch_id,
+        "job_count": len(created_job_ids),
+        "status": "queued",
+        "message": f"{len(created_job_ids)} resume(s) from OneDrive queued for processing."
+    }
+
+
 @router.get("/screen/batch/{batch_id}")
 def get_batch_status(
     batch_id: str,
