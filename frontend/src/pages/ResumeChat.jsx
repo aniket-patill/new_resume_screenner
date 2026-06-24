@@ -3,7 +3,7 @@ import { useLocation } from 'react-router-dom';
 import {
     Send, Bot, User, Loader2, Sparkles, AlertCircle,
     RotateCcw, Search, ChevronRight, FileText, Star,
-    MessageSquare, Zap, X, Trash2,
+    MessageSquare, Zap, X, Trash2, RefreshCw,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import API_URL from '../apiConfig';
@@ -303,10 +303,45 @@ export default function ResumeChat() {
     const [pendingCandidateName, setPendingCandidateName] = useState(null);
     const [confirmDeleteId, setConfirmDeleteId] = useState(null);
     const [deletingId, setDeletingId] = useState(null);
+    const [syncingIndex, setSyncingIndex] = useState(false);
 
     const bottomRef = useRef(null);
     const inputRef = useRef(null);
     const token = localStorage.getItem('token');
+
+    const handleSyncIndex = async () => {
+        if (syncingIndex) return;
+        setSyncingIndex(true);
+        try {
+            const headers = { Authorization: `Bearer ${token}` };
+            const res = await fetch(`${API_URL}/api/rag/reindex`, {
+                method: 'POST',
+                headers,
+            });
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({}));
+                throw new Error(err.detail || `HTTP ${res.status}`);
+            }
+            const data = await res.json();
+            alert(data.message);
+            
+            // Re-fetch status & candidates
+            fetch(`${API_URL}/api/rag/status`, { headers })
+                .then(r => r.ok ? r.json() : null)
+                .then(st => st && setIndexStatus(st))
+                .catch(() => {});
+                
+            fetch(`${API_URL}/api/rag/indexed-candidates`, { headers })
+                .then(r => r.ok ? r.json() : { candidates: [] })
+                .then(candData => setIndexedCandidates(candData.candidates || []))
+                .catch(() => {});
+        } catch (e) {
+            console.error('Error syncing index:', e);
+            alert(e.message || 'Failed to sync index.');
+        } finally {
+            setSyncingIndex(false);
+        }
+    };
 
     // Persist messages to sessionStorage on every change
     useEffect(() => { saveMessages(messages); }, [messages]);
@@ -493,14 +528,24 @@ export default function ResumeChat() {
             <div className="w-64 flex-shrink-0 flex flex-col bg-white border-r border-gray-200/80 overflow-hidden">
                 {/* Sidebar header */}
                 <div className="px-4 py-4 border-b border-gray-100">
-                    <div className="flex items-center gap-2 mb-3">
-                        <div className="w-7 h-7 rounded-lg bg-[#5d8c2c]/10 flex items-center justify-center">
-                            <FileText size={14} className="text-[#5d8c2c]" />
+                    <div className="flex items-center justify-between gap-2 mb-3">
+                        <div className="flex items-center gap-2">
+                            <div className="w-7 h-7 rounded-lg bg-[#5d8c2c]/10 flex items-center justify-center">
+                                <FileText size={14} className="text-[#5d8c2c]" />
+                            </div>
+                            <div>
+                                <h2 className="text-xs font-bold text-gray-700 uppercase tracking-wider">Indexed Resumes</h2>
+                                <p className="text-[10px] text-gray-400">{indexedCandidates.length} candidate{indexedCandidates.length !== 1 ? 's' : ''}</p>
+                            </div>
                         </div>
-                        <div>
-                            <h2 className="text-xs font-bold text-gray-700 uppercase tracking-wider">Indexed Resumes</h2>
-                            <p className="text-[10px] text-gray-400">{indexedCandidates.length} candidate{indexedCandidates.length !== 1 ? 's' : ''}</p>
-                        </div>
+                        <button
+                            onClick={handleSyncIndex}
+                            disabled={syncingIndex}
+                            title="Sync RAG Index"
+                            className={`p-1.5 rounded-lg border border-gray-200 text-gray-400 hover:text-[#5d8c2c] hover:border-[#5d8c2c]/30 hover:bg-[#5d8c2c]/5 transition-all shadow-sm shrink-0 flex items-center justify-center ${syncingIndex ? 'bg-gray-50' : 'bg-white'}`}
+                        >
+                            <RefreshCw size={14} className={syncingIndex ? 'animate-spin text-[#5d8c2c]' : ''} />
+                        </button>
                     </div>
                     {/* Search within sidebar */}
                     <div className="relative">

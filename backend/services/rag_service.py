@@ -520,11 +520,12 @@ def _resolve_embed_model() -> str:
 
 def _embed_text_sync(text: str, task_type: str = "RETRIEVAL_DOCUMENT") -> list:
     """
-    Call Gemini embedContent via the v1 REST endpoint directly.
+    Call Gemini embedContent via the v1 REST endpoint directly with retries and exponential backoff.
     The google-generativeai SDK <=0.8.x only uses v1beta gRPC which doesn't
     support embedContent, so we bypass it entirely with a plain HTTPS request.
     """
     import requests as _req
+    import time
     api_key = os.getenv("GEMINI_API_KEY", "")
     if not api_key:
         raise ValueError("GEMINI_API_KEY is not set in environment")
@@ -539,9 +540,25 @@ def _embed_text_sync(text: str, task_type: str = "RETRIEVAL_DOCUMENT") -> list:
         "content": {"parts": [{"text": text}]},
         "taskType": task_type,
     }
-    resp = _req.post(url, json=payload, timeout=30)
-    resp.raise_for_status()
-    return resp.json()["embedding"]["values"]
+    
+    max_retries = 5
+    backoff = 2
+    for attempt in range(max_retries):
+        try:
+            resp = _req.post(url, json=payload, timeout=30)
+            if resp.status_code == 429:
+                print(f"[RAG] 429 Too Many Requests (embedContent). Retrying in {backoff}s (attempt {attempt+1}/{max_retries})...", flush=True)
+                time.sleep(backoff)
+                backoff *= 2
+                continue
+            resp.raise_for_status()
+            return resp.json()["embedding"]["values"]
+        except _req.exceptions.RequestException as e:
+            if attempt == max_retries - 1:
+                raise e
+            print(f"[RAG] Request failed: {e}. Retrying in {backoff}s (attempt {attempt+1}/{max_retries})...", flush=True)
+            time.sleep(backoff)
+            backoff *= 2
 
 
 async def _embed_text(text: str, task_type: str = "RETRIEVAL_DOCUMENT") -> list:
@@ -642,12 +659,19 @@ class RagIndexingService:
 
     @staticmethod
     def _ensure_collection(client: QdrantClient, collection_name: str) -> None:
-        existing = [c.name for c in client.get_collections().collections]
-        if collection_name not in existing:
-            client.create_collection(
-                collection_name=collection_name,
-                vectors_config=VectorParams(size=VECTOR_DIM, distance=Distance.COSINE)
-            )
+        from qdrant_client.http.exceptions import UnexpectedResponse
+        try:
+            existing = [c.name for c in client.get_collections().collections]
+            if collection_name not in existing:
+                client.create_collection(
+                    collection_name=collection_name,
+                    vectors_config=VectorParams(size=VECTOR_DIM, distance=Distance.COSINE)
+                )
+        except UnexpectedResponse as e:
+            if e.status_code == 409 or "already exists" in str(e):
+                print(f"[RAG] Collection {collection_name} already exists (concurrently created). Safe to proceed.", flush=True)
+            else:
+                raise e
 
     @staticmethod
     def delete_collection(user_id: int) -> None:
@@ -694,8 +718,15 @@ class RagIndexingService:
                 return False
 
             print(f"[RAG] Embedding {len(chunks)} chunks for candidate {candidate_id}...", flush=True)
+            sem = asyncio.Semaphore(2)
+            async def embed_with_semaphore(text):
+                async with sem:
+                    res = await _embed_text(text, "RETRIEVAL_DOCUMENT")
+                    await asyncio.sleep(0.5) # Sleep to avoid rate-limiting bursts
+                    return res
+
             embeddings = await asyncio.gather(
-                *[_embed_text(c["text"], "RETRIEVAL_DOCUMENT") for c in chunks]
+                *[embed_with_semaphore(c["text"]) for c in chunks]
             )
             print(f"[RAG] Embeddings done for candidate {candidate_id}", flush=True)
 
@@ -865,14 +896,14 @@ You have access to two context sources:
 HR Manager's Inquiry: {query_text}
 
 ### Constraints & Formatting Guidelines:
-1. **Source Fidelity**: Rely ONLY on the facts present in the provided contexts. Do not extrapolate, assume, or speculate.
-2. **Identification**: Refer to candidates exclusively by their full name (never by ID numbers or index).
-3. **Format**: Use clean markdown structure:
+1. **Direct and Minimal Answers (CRITICAL)**: Answer ONLY what is asked and no more. Do not add conversational introductions (e.g., "Here is the list of candidates...", "Based on the provided context..."), structural overviews, summary paragraphs, or closing remarks.
+2. **Straightforward Negative Responses**: If no candidates match the query (e.g., if asked for candidates with 1 year of experience and none exist), state that straightforwardly and concisely in a single sentence (e.g., "No candidates have 1 year of experience.") without offering unsolicited candidate recommendations, alternatives, or extra commentary.
+3. **Source Fidelity**: Rely ONLY on the facts present in the provided contexts. Do not extrapolate, assume, or speculate.
+4. **Identification**: Refer to candidates exclusively by their full name (never by ID numbers or index).
+5. **Format**: Use clean, concise markdown structure:
    - Bold candidate names and key technical skills (e.g., **Python**, **React**).
-   - Use bullet points for structured listings or comparative bulleted summaries.
-   - Use section headings (`###`) to divide longer comparative or detailed evaluations.
-4. **Tone**: Be professional, direct, objective, and action-oriented.
-5. **Missing Information**: If the contexts do not contain enough facts to answer the question, state that clearly and specify what details are missing.
+   - Use bullet points for structured listings.
+6. **Tone**: Be professional, direct, objective, and action-oriented.
 
 ### Answer:
 """
@@ -881,7 +912,7 @@ HR Manager's Inquiry: {query_text}
             from . import gemini_client
             answer = gemini_client.call_gemini_text(
                 prompt=prompt,
-                system_prompt="You are a professional Recruiting Partner. Reference specific candidates from context. Be concise and factual.",
+                system_prompt="You are a professional Recruiting Partner. Answer ONLY what is asked, without any conversational filler or introductions. Be extremely concise, direct, and factual.",
                 temperature=0.3
             )
         except Exception as e:

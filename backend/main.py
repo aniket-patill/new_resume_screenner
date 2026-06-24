@@ -66,3 +66,8 @@ app.include_router(onedrive.router)
 @app.get("/")
 def read_root():
     return {"message": "HiringAI Backend is running on FastAPI!"}
+
+
+@app.get("/health")
+def health():
+    return {"status": "ok"}

@@ -187,3 +187,67 @@ async def indexed_candidates(
         }
     except Exception as e:
         return {"candidates": [], "total": 0, "error": str(e)}
+
+
+@router.post("/reindex")
+async def reindex_candidates(
+    db: Session = Depends(database.get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    """Trigger background indexing for all candidates of the current user who are missing from the RAG index."""
+    candidates = db.query(models.Candidate).filter(
+        models.Candidate.created_by == current_user.id
+    ).all()
+    
+    if not candidates:
+        return {"message": "No candidates found to index.", "triggered_count": 0}
+        
+    indexed_ids = set()
+    try:
+        from qdrant_client import QdrantClient
+        import os
+        client = QdrantClient(url=os.getenv("QDRANT_URL", "http://localhost:6333"))
+        collection_name = f"resumes_{current_user.id}"
+        collections = [c.name for c in client.get_collections().collections]
+        if collection_name in collections:
+            offset = None
+            while True:
+                scroll_result = client.scroll(
+                    collection_name=collection_name,
+                    limit=100,
+                    offset=offset,
+                    with_payload=True,
+                    with_vectors=False,
+                )
+                records = scroll_result[0] if isinstance(scroll_result, tuple) else scroll_result
+                next_offset = scroll_result[1] if isinstance(scroll_result, tuple) else None
+                for point in records:
+                    payload = point.payload if hasattr(point, 'payload') else {}
+                    cid = (payload or {}).get("candidate_id")
+                    if cid is not None:
+                        indexed_ids.add(int(cid))
+                if not next_offset:
+                    break
+                offset = next_offset
+    except Exception as e:
+        print(f"Error checking indexed candidates: {e}")
+
+    to_index = [c for c in candidates if c.id not in indexed_ids]
+    
+    if not to_index:
+        return {"message": "All candidates are already indexed in RAG.", "triggered_count": 0}
+        
+    import asyncio
+    from services.rag_service import RagIndexingService
+    
+    async def index_candidate_bg(candidate_id, user_id, text):
+        await RagIndexingService.index_candidate(candidate_id, user_id, text)
+        
+    for c in to_index:
+        asyncio.create_task(index_candidate_bg(c.id, current_user.id, c.full_text or ""))
+        
+    return {
+        "message": f"Triggered RAG indexing for {len(to_index)} candidate(s) in the background.",
+        "triggered_count": len(to_index)
+    }
+
